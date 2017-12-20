@@ -2500,188 +2500,115 @@ epg_broadcast_t *epg_broadcast_deserialize
 
 #define C_ (const char *[])
 static const char **_epg_genre_names[16][16] = {
-  { /* 00 */
-    C_{ "", NULL  }
+  {
+    C_{ "", NULL }                                  // 00 (0x00)
   },
-  { /* 01 */
-    C_{ N_("Movie"), N_("Drama"), NULL },
-    C_{ N_("Detective"), N_("Thriller"), NULL },
-    C_{ N_("Adventure"), N_("Western"), N_("War"), NULL },
-    C_{ N_("Science fiction"), N_("Fantasy"), N_("Horror"), NULL },
-    C_{ N_("Comedy"), NULL },
-    C_{ N_("Soap"), N_("Melodrama"), N_("Folkloric"), NULL },
-    C_{ N_("Romance"), NULL },
-    C_{ N_("Serious"), N_("Classical"), N_("Religious"), N_("Historical movie"), N_("Drama"), NULL },
-    C_{ N_("Adult movie"), N_("Drama"), NULL },
-    C_{ N_("Movie / drama"), NULL },
-    C_{ N_("Movie / drama"), NULL },
-    C_{ N_("Movie / drama"), NULL },
-    C_{ N_("Movie / drama"), NULL },
-    C_{ N_("Movie / drama"), NULL },
-    C_{ N_("Movie / drama"), NULL },
-    C_{ N_("Movie / drama"), NULL },
+  {
+    C_{ "Movie", NULL },                            // 16 (0x10)
+    C_{ "Detective / Thriller", NULL },             // 17 (0x11)
+    C_{ "Action / Western / War", NULL },           // 18 (0x12)
+    C_{ "Sci-Fi / Fantasy / Horror", NULL },        // 19 (0x13)
+    C_{ "Comedy", NULL },                           // 20 (0x14)
+    C_{ "Soap / Melodrama", NULL },                 // 21 (0x15)
+    C_{ "Romance", NULL },                          // 22 (0x16)
+    C_{ "Classical / Historical", NULL },           // 23 (0x17)
+    C_{ "Adult Movie", NULL }                       // 24 (0x18)
   },
-  { /* 02 */
-    C_{ N_("News"), N_("Current affairs"), NULL },
-    C_{ N_("News"), N_("Weather report"), NULL },
-    C_{ N_("News magazine"), NULL },
-    C_{ N_("Documentary"), NULL },
-    C_{ N_("Discussion"), N_("Interview"), N_("Debate"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
-    C_{ N_("News / Current Affairs"), NULL },
+  {
+    C_{ "News", NULL },                             // 32 (0x20)
+    C_{ "Weather Report", NULL },                   // 33 (0x21)
+    C_{ "News Magazine", NULL },                    // 34 (0x22)
+    C_{ "Documentary", NULL },                      // 35 (0x23)
+    C_{ "Discussion / Interview / Debate", NULL }   // 36 (0x24)
   },
-  { /* 03 */
-    C_{ N_("Show"), N_("Game show"), NULL },
-    C_{ N_("Game show"), N_("Quiz"), N_("Contest"), NULL },
-    C_{ N_("Variety show"), NULL },
-    C_{ N_("Talk show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
-    C_{ N_("Show / Game show"), NULL },
+  {
+    C_{ "Entertainment", NULL },                    // 48 (0x30)
+    C_{ "Game Show", NULL },                        // 49 (0x31)
+    C_{ "Variety Show", NULL },                     // 50 (0x32)
+    C_{ "Talk Show", NULL }                         // 51 (0x33)
   },
-  { /* 04 */
-    C_{ N_("Sports"), NULL },
-    C_{ N_("Special events (Olympic Games, World Cup, etc.)"), NULL },
-    C_{ N_("Sports magazines"), NULL },
-    C_{ N_("Football"), N_("Soccer"), NULL },
-    C_{ N_("Tennis"), N_("Squash"), NULL },
-    C_{ N_("Team sports (excluding football)"), NULL },
-    C_{ N_("Athletics"), NULL },
-    C_{ N_("Motor sport"), NULL },
-    C_{ N_("Water sport"), NULL },
-    C_{ N_("Winter sports"), NULL },
-    C_{ N_("Equestrian"), NULL },
-    C_{ N_("Martial sports"), NULL },
-    C_{ N_("Sports"), NULL },
-    C_{ N_("Sports"), NULL },
-    C_{ N_("Sports"), NULL },
-    C_{ N_("Sports"), NULL },
+  {
+    C_{ "Sport", NULL },                            // 64 (0x40)
+    C_{ "Special Event", NULL },                    // 65 (0x41)
+    C_{ "Sports Magazine", NULL },                  // 66 (0x42)
+    C_{ "Football / Soccer", NULL },                // 67 (0x43)
+    C_{ "Tennis / Squash", NULL },                  // 68 (0x44)
+    C_{ "Team Sport", NULL },                       // 69 (0x45)
+    C_{ "Athletics", NULL },                        // 70 (0x46)
+    C_{ "Motor Sport", NULL },                      // 71 (0x47)
+    C_{ "Water Sport", NULL },                      // 72 (0x48)
+    C_{ "Winter Sport", NULL },                     // 73 (0x49)
+    C_{ "Equestrian", NULL },                       // 74 (0x4a)
+    C_{ "Martial Sport", NULL }                     // 75 (0x4b)
   },
-  { /* 05 */
-    C_{ N_("Children's / Youth programs"), NULL },
-    C_{ N_("Pre-school children's programs"), NULL },
-    C_{ N_("Entertainment programs for 6 to 14"), NULL },
-    C_{ N_("Entertainment programs for 10 to 16"), NULL },
-    C_{ N_("Informational"), N_("Educational"), N_("School programs"), NULL },
-    C_{ N_("Cartoons"), N_("Puppets"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
-    C_{ N_("Children's / Youth Programs"), NULL },
+  {
+    C_{ "Children's", NULL },                       // 80 (0x50)
+    C_{ "Pre-School", NULL },                       // 81 (0x51)
+    C_{ "Entertainment (6-14 yrs)", NULL },         // 82 (0x52)
+    C_{ "Entertainment (10-16 yrs)", NULL },        // 83 (0x53)
+    C_{ "Educational", NULL },                      // 84 (0x54)
+    C_{ "Cartoons", NULL }                          // 85 (0x55)
   },
-  { /* 06 */
-    C_{ N_("Music"), N_("Ballet"), N_("Dance"), NULL },
-    C_{ N_("Rock"), N_("Pop"), NULL },
-    C_{ N_("Serious music"), N_("Classical music"), NULL },
-    C_{ N_("Folk"), N_("Traditional music"), NULL },
-    C_{ N_("Jazz"), NULL },
-    C_{ N_("Musical"), N_("Opera"), NULL },
-    C_{ N_("Ballet"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
-    C_{ N_("Music / Ballet / Dance"), NULL },
+  {
+    C_{ "Music", NULL },                            // 96 (0x60)
+    C_{ "Rock / Pop", NULL },                       // 97 (0x61)
+    C_{ "Classical Music", NULL },                  // 98 (0x62)
+    C_{ "Folk Music", NULL },                       // 99 (x063)
+    C_{ "Jazz", NULL },                             // 100 (0x64)
+    C_{ "Musical / Opera", NULL },                  // 101 (0x65)
+    C_{ "Ballet", NULL }                            // 102 (0x66)
   },
-  { /* 07 */
-    C_{ N_("Arts"), N_("Culture (without music)"), NULL },
-    C_{ N_("Performing arts"), NULL },
-    C_{ N_("Fine arts"), NULL },
-    C_{ N_("Religion"), NULL },
-    C_{ N_("Popular culture"), N_("Traditional arts"), NULL },
-    C_{ N_("Literature"), NULL },
-    C_{ N_("Film"), N_("Cinema"), NULL },
-    C_{ N_("Experimental film"), N_("Video"), NULL },
-    C_{ N_("Broadcasting"), N_("Press"), NULL },
-    C_{ N_("New media"), NULL },
-    C_{ N_("Arts magazines"), N_("Culture magazines"), NULL },
-    C_{ N_("Fashion"), NULL },
-    C_{ N_("Arts / Culture (without music)"), NULL },
-    C_{ N_("Arts / Culture (without music)"), NULL },
-    C_{ N_("Arts / Culture (without music)"), NULL },
-    C_{ N_("Arts / Culture (without music)"), NULL },
+  {
+    C_{ "Arts / Culture", NULL },                   // 112 (0x70)
+    C_{ "Performing Arts", NULL },                  // 113 (0x71)
+    C_{ "Fine Arts", NULL },                        // 114 (0x72)
+    C_{ "Religion", NULL },                         // 115 (0x73)
+    C_{ "Pop Culture / Traditional", NULL },        // 116 (0x74)
+    C_{ "Literature", NULL },                       // 117 (0x75)
+    C_{ "Film / Cinema", NULL },                    // 118 (0x76)
+    C_{ "Experimental Film / Video", NULL },        // 119 (0x77)
+    C_{ "Broadcasting / Press", NULL },             // 120 (0x78)
+    C_{ "New Media", NULL },                        // 121 (0x79)
+    C_{ "Arts / Culture Magazine", NULL },          // 122 (0x7a)
+    C_{ "Fashion", NULL }                           // 123 (0x7b)
   },
-  { /* 08 */
-    C_{ N_("Social"), N_("Political issues"), N_("Economics"), NULL },
-    C_{ N_("Magazines"), N_("Reports"), N_("Documentary"), NULL },
-    C_{ N_("Economics"), N_("Social advisory"), NULL },
-    C_{ N_("Remarkable people"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
-    C_{ N_("Social / Political issues / Economics"), NULL },
+  {
+    C_{ "Current Affairs", NULL },                  // 128 (0x80)
+    C_{ "Documentary", NULL },                      // 129 (0x81)
+    C_{ "Economics", NULL },                        // 130 (0x82)
+    C_{ "Remarkable People", NULL }                 // 131 (0x83)
   },
-  { /* 09 */
-    C_{ N_("Education"), N_("Science"), N_("Factual topics"), NULL },
-    C_{ N_("Nature"), N_("Animals"), N_("Environment"), NULL },
-    C_{ N_("Technology"), N_("Natural sciences"), NULL },
-    C_{ N_("Medicine"), N_("Physiology"), N_("Psychology"), NULL },
-    C_{ N_("Foreign countries"), N_("Expeditions"), NULL },
-    C_{ N_("Social"), N_("Spiritual sciences"), NULL },
-    C_{ N_("Further education"), NULL },
-    C_{ N_("Languages"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
-    C_{ N_("Education / Science / Factual topics"), NULL },
+  {
+    C_{ "Education / Information", NULL },          // 144 (0x90)
+    C_{ "Nature / Environment", NULL },             // 145 (0x91)
+    C_{ "Technology", NULL },                       // 146 (0x92)
+    C_{ "Medicine / Physiology", NULL },            // 147 (0x93)
+    C_{ "Foreign Country / Expedition", NULL },     // 148 (0x94)
+    C_{ "Social / Spiritual Science", NULL },       // 149 (0x95)
+    C_{ "Further Education", NULL },                // 150 (0x96)
+    C_{ "Languages", NULL }                         // 151 (0x97)
   },
-  { /* 10 */
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Tourism / Travel"), NULL },
-    C_{ N_("Handicraft"), NULL },
-    C_{ N_("Motoring"), NULL },
-    C_{ N_("Fitness and health"), NULL },
-    C_{ N_("Cooking"), NULL },
-    C_{ N_("Advertisement / Shopping"), NULL },
-    C_{ N_("Gardening"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
-    C_{ N_("Leisure hobbies"), NULL },
+  {
+    C_{ "Infotainment", NULL },                     // 160 (0xA0)
+    C_{ "Tourism / Travel", NULL },                 // 161 (0xA1)
+    C_{ "Handicraft", NULL },                       // 162 (0xA2)
+    C_{ "Motoring", NULL },                         // 163 (0xA3)
+    C_{ "Fitness / Health", NULL },                 // 164 (0xA4)
+    C_{ "Cooking", NULL },                          // 165 (0xA5)
+    C_{ "Advertisement / Shopping", NULL },         // 166 (0xA6)
+    C_{ "Gardening", NULL }                         // 167 (0xA7)
+  },
+  {
+    C_{ "Special", NULL }                           // 176 (0xB0)
+  },
+  {
+    C_{ "Comedy", NULL }                            // 192 (0xC0)
+  },
+  {
+    C_{ "Drama", NULL }                             // 208 (0xD0)
+  },
+  {
+    C_{ "Documentary", NULL }                       // 224 (0xE0)
   }
 };
 

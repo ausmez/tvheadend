@@ -355,8 +355,14 @@ static int _eit_desc_component
 static int _eit_desc_content
   ( epggrab_module_t *mod, const uint8_t *ptr, int len, eit_event_t *ev )
 {
+  mod = epggrab_module_find_by_id("au_freeview");
   while (len > 1) {
-    if (*ptr == 0xb1)
+    if (mod && mode->enabled) {
+      if (*ptr < 0xff) {
+        if (!ev->genre) ev->genre = calloc(1, sizeof(epg_genre_list_t));
+        epg_genre_list_add_by_eit(ev->genre, *ptr);        
+      }
+    } else if (*ptr == 0xb1)
       ev->bw = 1;
     else if (*ptr < 0xb0) {
       if (!ev->genre) ev->genre = calloc(1, sizeof(epg_genre_list_t));
@@ -375,17 +381,22 @@ static int _eit_desc_parental
   ( epggrab_module_t *mod, const uint8_t *ptr, int len, eit_event_t *ev )
 {
   int cnt = 0, sum = 0, i = 0;
-  while (len > 3) {
-    if ( ptr[i] && ptr[i] < 0x10 ) {
-      cnt++;
-      sum += (ptr[i] + 3);
+  mod = epggrab_module_find_by_id("au_freeview");
+  if (mod && mod->enabled)
+    ev->parental = (uint8_t)ptr[3];
+  else {
+    while (len > 3) {
+      if ( ptr[i] && ptr[i] < 0x10 ) {
+        cnt++;
+        sum += (ptr[i] + 3);
+      }
+      len -= 4;
+      i   += 4;
     }
-    len -= 4;
-    i   += 4;
+    // Note: we ignore the country code and average the lot!
+    if (cnt)
+      ev->parental = (uint8_t)(sum / cnt);
   }
-  // Note: we ignore the country code and average the lot!
-  if (cnt)
-    ev->parental = (uint8_t)(sum / cnt);
 
   return 0;
 }
@@ -1303,6 +1314,7 @@ void eit_init ( void )
   EIT_CREATE("eit", "EIT: DVB Grabber", 1, &ops);
   EIT_CREATE("uk_freesat", "UK: Freesat", 5, &ops_uk_freesat);
   EIT_CREATE("uk_freeview", "UK: Freeview", 5, &ops_uk_freeview);
+  EIT_CREATE("au_freeview", "AU: Freeview", 5, &ops);
   EIT_CREATE("nz_freeview", "New Zealand: Freeview", 5, &ops_nz_freeview);
   EIT_CREATE("viasat_baltic", "VIASAT: Baltic", 5, &ops_baltic);
   EIT_CREATE("Bulsatcom_39E", "Bulsatcom: Bula 39E", 5, &ops_bulsat);
