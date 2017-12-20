@@ -674,7 +674,10 @@ tvheadend.epg = function() {
                 header: _("Age"),
                 tooltip: _("Age"),
                 dataIndex: 'ageRating',
-                renderer: renderInt
+                renderer: function(value, meta, record) {
+                    var arr = ["-","-","P","P","C","C","G","G","PG","PG","M","M","MA 15+","MA 15+","AV 15+","R"];
+                    return arr[value];
+                }
             }, {
                 width: 250,
                 id: 'genre',
