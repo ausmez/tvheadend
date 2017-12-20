@@ -357,7 +357,7 @@ static int _eit_desc_content
 {
   mod = epggrab_module_find_by_id("au_freeview");
   while (len > 1) {
-    if (mod && mode->enabled) {
+    if (mod && mod->enabled) {
       if (*ptr < 0xff) {
         if (!ev->genre) ev->genre = calloc(1, sizeof(epg_genre_list_t));
         epg_genre_list_add_by_eit(ev->genre, *ptr);        
