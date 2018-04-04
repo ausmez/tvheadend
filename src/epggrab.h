@@ -221,7 +221,7 @@ struct epggrab_module_ext
 
 struct epggrab_ota_svc_link
 {
-  char                          *uuid;
+  tvh_uuid_t                     uuid;
   uint64_t                       last_tune_count;
   RB_ENTRY(epggrab_ota_svc_link) link;
 };
@@ -232,7 +232,7 @@ struct epggrab_ota_svc_link
  */
 struct epggrab_ota_mux
 {
-  char                              *om_mux_uuid;     ///< Soft-link to mux
+  tvh_uuid_t                         om_mux_uuid;     ///< Soft-link to mux
   LIST_HEAD(,epggrab_ota_map)        om_modules;      ///< List of linked mods
   
   uint8_t                            om_done;         ///< The full completion mark for this round
@@ -241,6 +241,7 @@ struct epggrab_ota_mux
   uint8_t                            om_save;         ///< something changed
   mtimer_t                           om_timer;        ///< Per mux active timer
   mtimer_t                           om_data_timer;   ///< Any EPG data seen?
+  int64_t                            om_retry_time;   ///< Next time to retry
 
   char                              *om_force_modname;///< Force this module
 
@@ -266,6 +267,7 @@ struct epggrab_ota_map
   uint8_t                             om_forced;
   uint64_t                            om_tune_count;
   RB_HEAD(,epggrab_ota_svc_link)      om_svcs;         ///< Muxes we carry data for
+  void                               *om_opaque;
 };
 
 /*
@@ -290,7 +292,9 @@ struct epggrab_module_ota_scraper
   epggrab_module_ota_t             ;      ///< Parent object
   char                   *scrape_config;  ///< Config to use or blank/NULL for default.
   int                     scrape_episode; ///< Scrape season/episode from EIT summary
+  int                     scrape_title;   ///< Scrape title from EIT title + summary
   int                     scrape_subtitle;///< Scrape subtitle from EIT summary
+  int                     scrape_summary; ///< Scrape summary from EIT summary
 };
 
 /*
@@ -378,6 +382,7 @@ void epggrab_channel_mod ( struct channel *ch );
  * OTA kick
  */
 void epggrab_ota_queue_mux( struct mpegts_mux *mm );
+epggrab_ota_mux_t *epggrab_ota_find_mux ( struct mpegts_mux *mm );
 
 #endif /* __EPGGRAB_H__ */
 

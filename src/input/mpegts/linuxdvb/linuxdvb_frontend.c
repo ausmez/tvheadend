@@ -657,15 +657,14 @@ static void
 linuxdvb_frontend_stop_mux
   ( mpegts_input_t *mi, mpegts_mux_instance_t *mmi )
 {
-  char buf1[256], buf2[256];
+  char buf1[256];
   linuxdvb_frontend_t *lfe = (linuxdvb_frontend_t*)mi, *lfe2;
 
   if (lfe->lfe_master)
     assert(lfe->lfe_type == DVB_TYPE_S);
 
   mi->mi_display_name(mi, buf1, sizeof(buf1));
-  mpegts_mux_nice_name(mmi->mmi_mux, buf2, sizeof(buf2));
-  tvhdebug(LS_LINUXDVB, "%s - stopping %s", buf1, buf2);
+  tvhdebug(LS_LINUXDVB, "%s - stopping %s", buf1, mmi->mmi_mux->mm_nicename);
 
   /* Stop thread */
   if (lfe->lfe_dvr_pipe.wr > 0) {
@@ -1223,6 +1222,7 @@ linuxdvb_frontend_monitor ( void *aux )
   sigstat.tc_bit       = mmi->tii_stats.tc_bit;
   sigstat.ec_block     = mmi->tii_stats.ec_block;
   sigstat.tc_block     = mmi->tii_stats.tc_block;
+  memset(&sm, 0, sizeof(sm));
   sm.sm_type = SMT_SIGNAL_STATUS;
   sm.sm_data = &sigstat;
 
@@ -1315,25 +1315,33 @@ linuxdvb_update_pids ( linuxdvb_frontend_t *lfe, const char *name,
                        int pids_size )
 {
   mpegts_apids_t wpid, padd, pdel;
-  int i, max = MAX(14, lfe->lfe_pids_max);
+  int i, max = MAX(14, lfe->lfe_pids_max), overlimit;
   int all = lfe->lfe_pids.all;
+  char buf[512];
 
   pthread_mutex_lock(&lfe->lfe_dvr_lock);
 
   if (!all) {
-    mpegts_pid_weighted(&wpid, &lfe->lfe_pids, max);
-    if (wpid.count > max && lfe->lfe_pids_use_all) {
+    overlimit = mpegts_pid_weighted(&wpid, &lfe->lfe_pids, max, MPS_WEIGHT_ALLLIMIT);
+    if (tvhtrace_enabled()) {
+      mpegts_pid_dump(&wpid, buf, sizeof(buf), 1, 1);
+      tvhtrace(LS_LINUXDVB, "%s - weighted PIDs %s", name, buf);
+    }
+    if (overlimit && lfe->lfe_pids_use_all) {
       all = 1;
       mpegts_pid_done(&wpid);
     } else {
+      if (overlimit)
+        tvhwarn(LS_LINUXDVB, "%s - unable to set filter for %d PIDs", name, overlimit);
       mpegts_pid_compare(&wpid, tuned, &padd, &pdel);
-      mpegts_pid_done(&wpid);
       for (i = 0; i < pdel.count; i++)
         linuxdvb_frontend_close_pid0(lfe, name, pids, pids_size, pdel.pids[i].pid);
       for (i = 0; i < padd.count; i++)
        linuxdvb_frontend_open_pid0(lfe, name, pids, pids_size, padd.pids[i].pid);
       mpegts_pid_done(&padd);
       mpegts_pid_done(&pdel);
+      mpegts_pid_copy(tuned, &wpid);
+      mpegts_pid_done(&wpid);
     }
   }
 
@@ -1342,8 +1350,6 @@ linuxdvb_update_pids ( linuxdvb_frontend_t *lfe, const char *name,
   else if (!all && linuxdvb_pid_exists(pids, pids_size, MPEGTS_FULLMUX_PID))
     linuxdvb_frontend_close_pid0(lfe, name, pids, pids_size, MPEGTS_FULLMUX_PID);
 
-  mpegts_pid_done(tuned);
-  mpegts_pid_weighted(tuned, &lfe->lfe_pids, max);
   tuned->all = lfe->lfe_pids.all;
 
   pthread_mutex_unlock(&lfe->lfe_dvr_lock);
@@ -1389,10 +1395,12 @@ linuxdvb_frontend_input_thread ( void *aux )
   /* Setup poll */
   efd = tvhpoll_create(2);
   memset(ev, 0, sizeof(ev));
-  ev[0].events             = TVHPOLL_IN;
-  ev[0].fd = ev[0].data.fd = dvr;
-  ev[1].events             = TVHPOLL_IN;
-  ev[1].fd = ev[1].data.fd = lfe->lfe_dvr_pipe.rd;
+  ev[0].events = TVHPOLL_IN;
+  ev[0].fd     = dvr;
+  ev[0].ptr    = lfe;
+  ev[1].events = TVHPOLL_IN;
+  ev[1].fd     = lfe->lfe_dvr_pipe.rd;
+  ev[1].ptr    = &lfe->lfe_dvr_pipe;
   tvhpoll_add(efd, ev, 2);
 
   /* Allocate memory */
@@ -1414,7 +1422,7 @@ linuxdvb_frontend_input_thread ( void *aux )
       }
     }
     if (nfds < 1) continue;
-    if (ev[0].data.fd == lfe->lfe_dvr_pipe.rd) {
+    if (ev[0].ptr == &lfe->lfe_dvr_pipe) {
       if (read(lfe->lfe_dvr_pipe.rd, &b, 1) > 0) {
         if (b == 'c')
           linuxdvb_update_pids(lfe, name, &tuned, pids, ARRAY_SIZE(pids));
@@ -1423,13 +1431,13 @@ linuxdvb_frontend_input_thread ( void *aux )
       }
       continue;
     }
-    if (ev[0].data.fd != dvr) break;
+    if (ev[0].ptr != lfe) break;
 
     nodata = 50;
     lfe->lfe_nodata = 0;
     
     /* Read */
-    if ((n = sbuf_tsdebug_read(mmi->mmi_mux, &sb, dvr)) < 0) {
+    if ((n = sbuf_read(&sb, dvr)) < 0) {
       if (ERRNO_AGAIN(errno))
         continue;
       if (errno == EOVERFLOW) {
@@ -1452,7 +1460,7 @@ linuxdvb_frontend_input_thread ( void *aux )
     }
     
     /* Process */
-    mpegts_input_recv_packets((mpegts_input_t*)lfe, mmi, &sb, 0, NULL);
+    mpegts_input_recv_packets(mmi, &sb, 0, NULL);
   }
 
   sbuf_free(&sb);
@@ -1955,11 +1963,10 @@ linuxdvb_frontend_tune1
   ( linuxdvb_frontend_t *lfe, mpegts_mux_instance_t *mmi, uint32_t freq )
 {
   int r = 0, i, rep;
-  char buf1[256], buf2[256];
+  char buf1[256];
 
   lfe->mi_display_name((mpegts_input_t*)lfe, buf1, sizeof(buf1));
-  mpegts_mux_nice_name(mmi->mmi_mux, buf2, sizeof(buf2));
-  tvhdebug(LS_LINUXDVB, "%s - starting %s", buf1, buf2);
+  tvhdebug(LS_LINUXDVB, "%s - starting %s", buf1, mmi->mmi_mux->mm_nicename);
 
   /* Tune */
   tvhtrace(LS_LINUXDVB, "%s - tuning", buf1);
@@ -2069,20 +2076,20 @@ linuxdvb_frontend_create
   htsmsg_t *scconf;
   ssize_t r;
 
-  /* Tuner slave */
-  snprintf(id, sizeof(id), "master for #%d", number);
-  if (conf && type == DVB_TYPE_S) {
-    muuid = htsmsg_get_str(conf, id);
-    if (muuid && uuid && !strcmp(muuid, uuid))
-      muuid = NULL;
-  }
-
   /* Internal config ID */
   snprintf(id, sizeof(id), "%s #%d", dvb_type2str(type), number);
   if (conf)
     conf = htsmsg_get_map(conf, id);
   if (conf)
     uuid = htsmsg_get_str(conf, "uuid");
+
+  /* Tuner slave */
+  snprintf(buf, sizeof(buf), "master for #%d", number);
+  if (conf && type == DVB_TYPE_S) {
+    muuid = htsmsg_get_str(conf, buf);
+    if (muuid && uuid && !strcmp(muuid, uuid))
+      muuid = NULL;
+  }
 
   /* Fudge configuration for old network entry */
   if (conf) {
@@ -2201,17 +2208,17 @@ linuxdvb_frontend_create
 void
 linuxdvb_frontend_save ( linuxdvb_frontend_t *lfe, htsmsg_t *fe )
 {
-  char id[16], ubuf[UUID_HEX_SIZE];
+  char id[16];
   htsmsg_t *m = htsmsg_create_map();
 
   /* Save frontend */
   mpegts_input_save((mpegts_input_t*)lfe, m);
   htsmsg_add_str(m, "type", dvb_type2str(lfe->lfe_type));
-  htsmsg_add_str(m, "uuid", idnode_uuid_as_str(&lfe->ti_id, ubuf));
+  htsmsg_add_uuid(m, "uuid", &lfe->ti_id.in_uuid);
   if (lfe->lfe_satconf && !lfe->lfe_master) {
     htsmsg_t *s = htsmsg_create_map();
     linuxdvb_satconf_save(lfe->lfe_satconf, s);
-    htsmsg_add_str(s, "uuid", idnode_uuid_as_str(&lfe->lfe_satconf->ls_id, ubuf));
+    htsmsg_add_uuid(s, "uuid", &lfe->lfe_satconf->ls_id.in_uuid);
     htsmsg_add_msg(m, "satconf", s);
   }
   htsmsg_delete_field(m, "fe_master");

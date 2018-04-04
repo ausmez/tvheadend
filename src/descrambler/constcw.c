@@ -133,7 +133,7 @@ constcw_service_start(caclient_t *cac, service_t *t)
   if (mt->s_dvb_forcecaid && mt->s_dvb_forcecaid != ccw->ccw_caid)
     return;
 
-  if (mt->s_dvb_service_id != ccw->ccw_sid)
+  if (service_id16(mt) != ccw->ccw_sid)
     return;
 
   if (mt->s_dvb_mux->mm_tsid != ccw->ccw_tsid)
@@ -147,7 +147,7 @@ constcw_service_start(caclient_t *cac, service_t *t)
 
   if (!mt->s_dvb_forcecaid) {
     pthread_mutex_lock(&t->s_stream_mutex);
-    TAILQ_FOREACH(st, &t->s_filt_components, es_filt_link) {
+    TAILQ_FOREACH(st, &t->s_components.set_filter, es_filter_link) {
       LIST_FOREACH(c, &st->es_caids, link) {
         if (c->use && c->caid == ccw->ccw_caid &&
             c->providerid == ccw->ccw_providerid)
@@ -295,11 +295,28 @@ constcw_class_key_odd_get(void *o)
   return constcw_class_key_get(o, ccw->ccw_key_odd);
 }
 
+static property_group_t caclient_ic_groups[] = {
+    {
+      .name   = N_("Client"),
+      .number = 1,
+    },
+    {
+      .name   = N_("Filter"),
+      .number = 2,
+    },
+    {
+      .name   = N_("Keys"),
+      .number = 3,
+    },
+    {}
+};
+
 const idclass_t caclient_ccw_csa_cbc_class =
 {
   .ic_super      = &caclient_class,
   .ic_class      = "caclient_ccw_csa_cbc",
   .ic_caption    = N_("CSA CBC Constant Code Word"),
+  .ic_groups     = caclient_ic_groups,
   .ic_properties = (const property_t[]){
     {
       .type     = PT_U16,
@@ -308,7 +325,8 @@ const idclass_t caclient_ccw_csa_cbc_class =
       .desc     = N_("Conditional Access Identification."),
       .off      = offsetof(constcw_t, ccw_caid),
       .opts     = PO_HEXA,
-      .def.u16  = 0x2600
+      .def.u16  = 0x2600,
+      .group    = 2,
     },
     {
       .type     = PT_U32,
@@ -317,7 +335,8 @@ const idclass_t caclient_ccw_csa_cbc_class =
       .desc     = N_("The provider's ID."),
       .off      = offsetof(constcw_t, ccw_providerid),
       .opts     = PO_HEXA,
-      .def.u32  = 0
+      .def.u32  = 0,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -327,6 +346,7 @@ const idclass_t caclient_ccw_csa_cbc_class =
       .off      = offsetof(constcw_t, ccw_tsid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -336,6 +356,7 @@ const idclass_t caclient_ccw_csa_cbc_class =
       .off      = offsetof(constcw_t, ccw_sid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_STR,
@@ -346,6 +367,7 @@ const idclass_t caclient_ccw_csa_cbc_class =
       .get      = constcw_class_key_even_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     {
       .type     = PT_STR,
@@ -356,6 +378,7 @@ const idclass_t caclient_ccw_csa_cbc_class =
       .get      = constcw_class_key_odd_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     { }
   }
@@ -366,6 +389,7 @@ const idclass_t caclient_ccw_des_ncb_class =
   .ic_super      = &caclient_class,
   .ic_class      = "caclient_ccw_des_ncb",
   .ic_caption    = N_("DES NCB Constant Code Word"),
+  .ic_groups     = caclient_ic_groups,
   .ic_properties = (const property_t[]){
     {
       .type     = PT_U16,
@@ -374,7 +398,8 @@ const idclass_t caclient_ccw_des_ncb_class =
       .desc     = N_("Conditional Access Identification."),
       .off      = offsetof(constcw_t, ccw_caid),
       .opts     = PO_HEXA,
-      .def.u16  = 0x2600
+      .def.u16  = 0x2600,
+      .group    = 2,
     },
     {
       .type     = PT_U32,
@@ -383,7 +408,8 @@ const idclass_t caclient_ccw_des_ncb_class =
       .desc     = N_("The provider's ID."),
       .off      = offsetof(constcw_t, ccw_providerid),
       .opts     = PO_HEXA,
-      .def.u32  = 0
+      .def.u32  = 0,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -393,6 +419,7 @@ const idclass_t caclient_ccw_des_ncb_class =
       .off      = offsetof(constcw_t, ccw_tsid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -402,6 +429,7 @@ const idclass_t caclient_ccw_des_ncb_class =
       .off      = offsetof(constcw_t, ccw_sid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_STR,
@@ -412,6 +440,7 @@ const idclass_t caclient_ccw_des_ncb_class =
       .get      = constcw_class_key_even_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     {
       .type     = PT_STR,
@@ -422,6 +451,7 @@ const idclass_t caclient_ccw_des_ncb_class =
       .get      = constcw_class_key_odd_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     { }
   }
@@ -432,6 +462,7 @@ const idclass_t caclient_ccw_aes_ecb_class =
   .ic_super      = &caclient_class,
   .ic_class      = "caclient_ccw_aes_ecb",
   .ic_caption    = N_("AES ECB Constant Code Word"),
+  .ic_groups     = caclient_ic_groups,
   .ic_properties = (const property_t[]){
     {
       .type     = PT_U16,
@@ -440,7 +471,8 @@ const idclass_t caclient_ccw_aes_ecb_class =
       .desc     = N_("Conditional Access Identification."),
       .off      = offsetof(constcw_t, ccw_caid),
       .opts     = PO_HEXA,
-      .def.u16  = 0x2600
+      .def.u16  = 0x2600,
+      .group    = 2,
     },
     {
       .type     = PT_U32,
@@ -449,7 +481,8 @@ const idclass_t caclient_ccw_aes_ecb_class =
       .desc     = N_("The provider's ID."),
       .off      = offsetof(constcw_t, ccw_providerid),
       .opts     = PO_HEXA,
-      .def.u32  = 0
+      .def.u32  = 0,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -459,6 +492,7 @@ const idclass_t caclient_ccw_aes_ecb_class =
       .off      = offsetof(constcw_t, ccw_tsid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -468,6 +502,7 @@ const idclass_t caclient_ccw_aes_ecb_class =
       .off      = offsetof(constcw_t, ccw_sid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_STR,
@@ -478,6 +513,7 @@ const idclass_t caclient_ccw_aes_ecb_class =
       .get      = constcw_class_key_even_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     {
       .type     = PT_STR,
@@ -488,6 +524,7 @@ const idclass_t caclient_ccw_aes_ecb_class =
       .get      = constcw_class_key_odd_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     { }
   }
@@ -498,6 +535,7 @@ const idclass_t caclient_ccw_aes128_ecb_class =
   .ic_super      = &caclient_class,
   .ic_class      = "caclient_ccw_aes128_ecb",
   .ic_caption    = N_("AES128 ECB Constant Code Word"),
+  .ic_groups     = caclient_ic_groups,
   .ic_properties = (const property_t[]){
     {
       .type     = PT_U16,
@@ -507,6 +545,7 @@ const idclass_t caclient_ccw_aes128_ecb_class =
       .off      = offsetof(constcw_t, ccw_caid),
       .opts     = PO_HEXA,
       .def.u16  = 0x2600,
+      .group    = 2,
     },
     {
       .type     = PT_U32,
@@ -515,7 +554,8 @@ const idclass_t caclient_ccw_aes128_ecb_class =
       .desc     = N_("The provider's ID."),
       .off      = offsetof(constcw_t, ccw_providerid),
       .opts     = PO_HEXA,
-      .def.u32  = 0
+      .def.u32  = 0,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -525,6 +565,7 @@ const idclass_t caclient_ccw_aes128_ecb_class =
       .off      = offsetof(constcw_t, ccw_tsid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_U16,
@@ -534,6 +575,7 @@ const idclass_t caclient_ccw_aes128_ecb_class =
       .off      = offsetof(constcw_t, ccw_sid),
       .opts     = PO_HEXA,
       .def.u16  = 1,
+      .group    = 2,
     },
     {
       .type     = PT_STR,
@@ -544,6 +586,7 @@ const idclass_t caclient_ccw_aes128_ecb_class =
       .get      = constcw_class_key_even_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     {
       .type     = PT_STR,
@@ -554,6 +597,7 @@ const idclass_t caclient_ccw_aes128_ecb_class =
       .get      = constcw_class_key_odd_get,
       .opts     = PO_PASSWORD,
       .def.s    = "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+      .group    = 3,
     },
     { }
   }

@@ -25,7 +25,6 @@
  * Class
  */
 extern const idclass_t mpegts_mux_class;
-extern const idclass_t mpegts_mux_instance_class;
 
 static inline void
 iptv_url_set0 ( char **url, char **sane_url,
@@ -373,11 +372,6 @@ iptv_mux_create0 ( iptv_network_t *in, const char *uuid, htsmsg_t *conf )
 
   sbuf_init(&im->mm_iptv_buffer);
 
-  /* Create Instance */
-  (void)mpegts_mux_instance_create(mpegts_mux_instance, NULL,
-                                   (mpegts_input_t*)iptv_input,
-                                   (mpegts_mux_t*)im);
-
   /* Services */
   c2 = NULL;
   c = htsmsg_get_map(conf, "services");
@@ -395,10 +389,11 @@ iptv_mux_create0 ( iptv_network_t *in, const char *uuid, htsmsg_t *conf )
     htsmsg_add_u32(conf, "sid", in->in_service_id);
     htsmsg_add_u32(conf, "dvb_servicetype", 1); /* SDTV */
     ms = iptv_service_create0(im, 0, 0, NULL, conf);
-    ms->s_pmt_pid = SERVICE_PMT_AUTO;
     htsmsg_destroy(conf);
-    if (ms)
+    if (ms) {
+      ms->s_components.set_pmt_pid = SERVICE_PMT_AUTO;
       mpegts_network_bouquet_trigger((mpegts_network_t *)in, 0);
+    }
   }
   htsmsg_destroy(c2);
 

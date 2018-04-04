@@ -28,7 +28,7 @@
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
 #define BYTE4BE(w) \
-  ((w >> 24) & 0xff), ((w >> 16) & 0xff), ((w >> 8) & 0xff), (w & 0xff)
+  (((w) >> 24) & 0xff), (((w) >> 16) & 0xff), (((w) >> 8) & 0xff), ((w) & 0xff)
 
 /*
  *
@@ -71,10 +71,13 @@ en50221_app_resman_handle
   en50221_app_resman_t *app = self;
   static const uint8_t resources[] = {
     BYTE4BE(CICAM_RI_RESOURCE_MANAGER),
-    BYTE4BE(CICAM_RI_APPLICATION_INFORMATION),
+    BYTE4BE(CICAM_RI_MMI),
     BYTE4BE(CICAM_RI_CONDITIONAL_ACCESS_SUPPORT),
     BYTE4BE(CICAM_RI_DATE_TIME),
-    BYTE4BE(CICAM_RI_MMI)
+    BYTE4BE(CICAM_RI_APPLICATION_INFORMATION),
+    BYTE4BE(CICAM_RI_APPLICATION_INFORMATION+1),
+    BYTE4BE(CICAM_RI_APPLICATION_INFORMATION+2),
+    BYTE4BE(CICAM_RI_APPLICATION_INFORMATION+4),
   };
   if (atag == CICAM_AOT_PROFILE_ENQ) {
     tvhtrace(LS_EN50221, "%s: profile enq reply sent", app->cia_name);
@@ -151,7 +154,8 @@ en50221_app_ca_handle
 
   if (atag == CICAM_AOT_CA_INFO) {
     count = 0;
-    for (; count < sizeof(app->cia_caids) - 1 && datalen > 1; count++, datalen -= 2)
+    for (; count < ARRAY_SIZE(app->cia_caids) - 1 && datalen > 1;
+         data += 2, datalen -= 2, count++)
       app->cia_caids[count] = (data[0] << 8) | data[1];
     if (datalen) {
       app->cia_caids[0] = 0;
@@ -162,7 +166,7 @@ en50221_app_ca_handle
     buf[0] = buf[1] = '\0';
     for (i = 0; i < count; ) {
       for (j = 0, c = 0; j < 4 && i < count; i++, j++) {
-        caid = app->cia_caids[0];
+        caid = app->cia_caids[i];
         tvh_strlcatf(buf, sizeof(buf), c, " %04X (%s)", caid, caid2name(caid));
       }
       tvhinfo(LS_EN50221, "%s: CAM supported CAIDs: %s", app->cia_name, buf + 1);
@@ -205,6 +209,7 @@ en50221_app_ca_handle
             if (CICAM_CA_ENABLE(p[2]) != CICAM_CAEI_POSSIBLE)
               app->cia_ca_possible = 1;
             tvh_strlcatf(buf, sizeof(buf), c, " %d=%02X", u16, p[2]);
+            i -= 3;
           }
         }
       }

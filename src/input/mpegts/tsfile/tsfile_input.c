@@ -96,8 +96,8 @@ tsfile_input_thread ( void *aux )
       mpegts_service_t *s;
       pthread_mutex_lock(&tsfile_lock);
       LIST_FOREACH(s, &tmi->mmi_mux->mm_services, s_dvb_mux_link) {
-        if (s->s_pcr_pid)
-          tmi->mmi_tsfile_pcr_pid = s->s_pcr_pid;
+        if (s->s_components.set_pcr_pid)
+          tmi->mmi_tsfile_pcr_pid = s->s_components.set_pcr_pid;
       }
       pthread_mutex_unlock(&tsfile_lock);
     }
@@ -131,7 +131,7 @@ tsfile_input_thread ( void *aux )
       pcr.pcr_first = PTS_UNSET;
       pcr.pcr_last  = PTS_UNSET;
       pcr.pcr_pid   = tmi->mmi_tsfile_pcr_pid;
-      mpegts_input_recv_packets((mpegts_input_t*)mi, mmi, &buf, 0, &pcr);
+      mpegts_input_recv_packets(mmi, &buf, 0, &pcr);
       if (pcr.pcr_pid)
         tmi->mmi_tsfile_pcr_pid = pcr.pcr_pid;
 

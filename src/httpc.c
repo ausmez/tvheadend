@@ -20,6 +20,7 @@
 #include "tvheadend.h"
 #include "http.h"
 #include "tcp.h"
+#include "config.h"
 
 #include <pthread.h>
 #include <unistd.h>
@@ -42,6 +43,10 @@
 
 #if ENABLE_ANDROID
 #include <sys/socket.h>
+#endif
+
+#if 0
+#define HTTPCLIENT_TESTSUITE 1
 #endif
 
 struct http_client_ssl {
@@ -85,7 +90,6 @@ static TAILQ_HEAD(,http_client) http_clients;
 static pthread_mutex_t          http_lock;
 static tvh_cond_t               http_cond;
 static th_pipe_t                http_pipe;
-static char                    *http_user_agent;
 
 /*
  *
@@ -687,15 +691,9 @@ http_client_finish( http_client_t *hc )
 
   tvhtrace(LS_HTTPC, "%04X: finishing", shortid(hc));
 
-  if (hc->hc_in_rtp_data && hc->hc_rtp_data_complete) {
-    http_client_get(hc);
-    pthread_mutex_unlock(&hc->hc_mutex);
-    res = hc->hc_rtp_data_complete(hc);
-    pthread_mutex_lock(&hc->hc_mutex);
-    http_client_put(hc);
-    if (res < 0)
-      return http_client_flush(hc, res);
-  } else if (hc->hc_data_complete) {
+  assert(!hc->hc_in_rtp_data);
+
+  if (hc->hc_data_complete) {
     http_client_get(hc);
     pthread_mutex_unlock(&hc->hc_mutex);
     res = hc->hc_data_complete(hc);
@@ -723,8 +721,7 @@ http_client_finish( http_client_t *hc )
       return HTTP_CON_RECEIVING;
     }
   }
-  if (TAILQ_FIRST(&hc->hc_wqueue) && hc->hc_code == HTTP_STATUS_OK &&
-      !hc->hc_in_rtp_data) {
+  if (TAILQ_FIRST(&hc->hc_wqueue) && hc->hc_code == HTTP_STATUS_OK) {
     hc->hc_code = 0;
     return http_client_send_partial(hc);
   }
@@ -1149,9 +1146,15 @@ rtsp_data:
         return res;
     }
     r += hc->hc_csize;
-    hc->hc_in_rtp_data = 1;
     hc->hc_code = 0;
-    res = http_client_finish(hc);
+    res = 0;
+    if (hc->hc_rtp_data_complete) {
+      http_client_get(hc);
+      pthread_mutex_unlock(&hc->hc_mutex);
+      res = hc->hc_rtp_data_complete(hc);
+      pthread_mutex_lock(&hc->hc_mutex);
+      http_client_put(hc);
+    }
     hc->hc_in_rtp_data = 0;
     if (res < 0)
       return http_client_flush(hc, res);
@@ -1217,12 +1220,8 @@ http_client_basic_args ( http_client_t *hc, http_arg_list_t *h, const url_t *url
                                         http_port(hc, url->scheme, url->port));
     http_arg_set(h, "Host", buf);
   }
-  if (http_user_agent) {
-    http_arg_set(h, "User-Agent", http_user_agent);
-  } else {
-    snprintf(buf, sizeof(buf), "TVHeadend/%s", tvheadend_version);
-    http_arg_set(h, "User-Agent", buf);
-  }
+  assert(config.http_user_agent);
+  http_arg_set(h, "User-Agent", config.http_user_agent);
   if (!keepalive)
     http_arg_set(h, "Connection", "close");
   http_client_basic_auth(hc, h, url->user, url->pass);
@@ -1409,7 +1408,7 @@ http_client_thread ( void *p )
       if (atomic_get(&http_running) && !ERRNO_AGAIN(errno))
         tvherror(LS_HTTPC, "tvhpoll_wait() error");
     } else if (n > 0) {
-      if (&http_pipe == ev.data.ptr) {
+      if (&http_pipe == ev.ptr) {
         if (read(http_pipe.rd, &c, 1) == 1) {
           /* end-of-task */
           break;
@@ -1418,7 +1417,7 @@ http_client_thread ( void *p )
       }
       pthread_mutex_lock(&http_lock);
       TAILQ_FOREACH(hc, &http_clients, hc_link)
-        if (hc == ev.data.ptr)
+        if (hc == ev.ptr)
           break;
       if (hc == NULL) {
         pthread_mutex_unlock(&http_lock);
@@ -1473,22 +1472,24 @@ http_client_reconnect
 
   free(hc->hc_scheme);
   free(hc->hc_host);
+  hc->hc_scheme = NULL;
+  hc->hc_host = NULL;
 
   if (scheme == NULL || host == NULL)
     goto errnval;
 
   port           = http_port(hc, scheme, port);
-  hc->hc_pevents = 0;
-  hc->hc_version = ver;
-  hc->hc_redirv  = ver;
-  hc->hc_scheme  = strdup(scheme);
-  hc->hc_host    = strdup(host);
-  hc->hc_port    = port;
   hc->hc_fd      = tcp_connect(host, port, hc->hc_bindaddr, errbuf, sizeof(errbuf), -1);
   if (hc->hc_fd < 0) {
     tvherror(LS_HTTPC, "%04X: Unable to connect to %s:%i - %s", shortid(hc), host, port, errbuf);
     goto errnval;
   }
+  hc->hc_pevents = 0;
+  hc->hc_version = ver;
+  hc->hc_redirv  = ver;
+  hc->hc_port    = port;
+  hc->hc_scheme  = strdup(scheme);
+  hc->hc_host    = strdup(host);
   hc->hc_einprogress = 1;
   tvhtrace(LS_HTTPC, "%04X: Connected to %s:%i", shortid(hc), host, port);
   http_client_ssl_free(hc);
@@ -1552,7 +1553,7 @@ http_client_connect
 
   hc             = calloc(1, sizeof(http_client_t));
   pthread_mutex_init(&hc->hc_mutex, NULL);
-  hc->hc_id      = ++tally;
+  hc->hc_id      = atomic_add(&tally, 1);
   hc->hc_aux     = aux;
   hc->hc_io_size = 1024;
   hc->hc_rtsp_stream_id = -1;
@@ -1658,10 +1659,8 @@ http_client_close ( http_client_t *hc )
 pthread_t http_client_tid;
 
 void
-http_client_init ( const char *user_agent )
+http_client_init ( void )
 {
-  http_user_agent = user_agent ? strdup(user_agent) : NULL;
-
   /* Setup list */
   pthread_mutex_init(&http_lock, NULL);
   tvh_cond_init(&http_cond);
@@ -1698,7 +1697,6 @@ http_client_done ( void )
   tvhpoll_destroy(http_poll);
   http_poll = NULL;
   pthread_mutex_unlock(&http_lock);
-  free(http_user_agent);
 }
 
 /*
@@ -2058,7 +2056,7 @@ rep:
         }
         if (r != 1)
           continue;
-        if (ev.data.ptr != hc) {
+        if (ev.ptr != hc) {
           fprintf(stderr, "HTTPCTS: Poll returned a wrong value\n");
           goto fatal;
         }

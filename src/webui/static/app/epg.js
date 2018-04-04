@@ -1,4 +1,4 @@
-insertContentGroupClearOption = function( scope, records, options ){
+insertContentGroupClearOption = function(scope, records, options) {
     var placeholder = Ext.data.Record.create(['val', 'key']);
     scope.insert(0,new placeholder({val: _('(Clear filter)'), key: '-1'}));
 };
@@ -10,7 +10,7 @@ tvheadend.ContentGroupStore = tvheadend.idnode_get_enum({
     }
 });
 
-insertCategoryClearOption = function( scope, records, options ){
+insertCategoryClearOption = function(scope, records, options) {
     var placeholder = Ext.data.Record.create(['key', 'val']);
     scope.insert(0,new placeholder({key: '-1', val: _('(Clear filter)')}));
 };
@@ -58,25 +58,21 @@ tvheadend.contentGroupFullLookupName = function(code) {
 };
 
 tvheadend.channelLookupName = function(key) {
-    channelString = "";
-
-    var index = tvheadend.channels.find('key', key);
-
+    var s = "";
+    var channels = tvheadend.getChannels();
+    var index = channels.find('key', key);
     if (index !== -1)
-        var channelString = tvheadend.channels.getAt(index).get('val');
-
-    return channelString;
+        s = channels.getAt(index).get('val');
+    return s;
 };
 
 tvheadend.channelTagLookupName = function(key) {
-    tagString = "";
-
-    var index = tvheadend.channelTags.find('key', key);
-
+    var s = "";
+    var tags = tvheadend.getChannelTags();
+    var index = tvheadend.tags.find('key', key);
     if (index !== -1)
-        var tagString = tvheadend.channelTags.getAt(index).get('val');
-
-    return tagString;
+        s = tags.getAt(index).get('val');
+    return s;
 };
 
 // Store for duration filters - EPG, autorec dialog and autorec rules in the DVR grid
@@ -273,7 +269,7 @@ tvheadend.epgDetails = function(event) {
           }));
         }
 
-        var confcombo = new Ext.form.ComboBox({
+        var confcombo = new Ext.ux.form.ComboAny({
             store: store,
             triggerAction: 'all',
             mode: 'local',
@@ -296,7 +292,7 @@ tvheadend.epgDetails = function(event) {
             handler: recordSeries,
             iconCls: 'autoRec',
             tooltip: _('Create an automatic recording rule to record all future programs that match the current query.'),
-            text: event.serieslinkId ? _("Record series") : _("Autorec")
+            text: event.serieslinkUri ? _("Record series") : _("Autorec")
         }));
 
     } else {
@@ -461,6 +457,7 @@ tvheadend.epg = function() {
             { name: 'subtitle' },
             { name: 'summary' },
             { name: 'description' },
+            { name: 'extratext' },
             { name: 'episodeOnscreen' },
             { name: 'image' },
             {
@@ -478,6 +475,7 @@ tvheadend.epg = function() {
                 type: 'date',
                 dateFormat: 'U' /* unix time */
             },
+            { name: 'duration' },
             { name: 'starRating' },
             { name: 'credits' },
             { name: 'category' },
@@ -488,7 +486,7 @@ tvheadend.epg = function() {
             { name: 'genre' },
             { name: 'dvrUuid' },
             { name: 'dvrState' },
-            { name: 'serieslinkId' }
+            { name: 'serieslinkUri' }
         ])
     });
 
@@ -539,6 +537,18 @@ tvheadend.epg = function() {
     function renderText(value, meta, record) {
         setMetaAttr(meta, record);
 
+        return value;
+    }
+
+    function renderExtraText(value, meta, record) {
+        setMetaAttr(meta, record);
+
+        value = record.data.subtitle;
+        if (!value) {
+          value = record.data.summary;
+          if (!value)
+            value = record.data.description;
+        }
         return value;
     }
 
@@ -599,11 +609,11 @@ tvheadend.epg = function() {
             },
             {
                 width: 250,
-                id: 'subtitle',
-                header: _("Subtitle"),
-                tooltip: _("Subtitle"),
-                dataIndex: 'subtitle',
-                renderer: renderText
+                id: 'extratext',
+                header: _("Extra text"),
+                tooltip: _("Extra text: subtitle or summary or description"),
+                dataIndex: 'extratext',
+                renderer: renderExtraText
             },
             {
                 width: 100,
@@ -635,6 +645,7 @@ tvheadend.epg = function() {
                 id: 'duration',
                 header: _("Duration"),
                 tooltip: _("Duration"),
+                dataIndex: 'duration',
                 renderer: renderDuration
             },
             {
@@ -710,7 +721,7 @@ tvheadend.epg = function() {
         local: false,
         filters: [
             { type: 'string',   dataIndex: 'title' },
-            { type: 'string',   dataIndex: 'subtitle' },
+            { type: 'string',   dataIndex: 'extratext' },
             { type: 'string',   dataIndex: 'episodeOnscreen' },
             { type: 'intsplit', dataIndex: 'channelNumber', intsplit: 1000000 },
             { type: 'string',   dataIndex: 'channelName' },
@@ -757,11 +768,11 @@ tvheadend.epg = function() {
 
     // Channels, uses global store
 
-    var epgFilterChannels = new Ext.form.ComboBox({
+    var epgFilterChannels = new Ext.ux.form.ComboAny({
         loadingText: _('Loading...'),
         width: 200,
         displayField: 'val',
-        store: tvheadend.channels,
+        store: tvheadend.getChannels(),
         mode: 'local',
         editable: true,
         forceSelection: true,
@@ -780,11 +791,11 @@ tvheadend.epg = function() {
 
     // Tags, uses global store
 
-    var epgFilterChannelTags = new Ext.form.ComboBox({
+    var epgFilterChannelTags = new Ext.ux.form.ComboAny({
         loadingText: _('Loading...'),
         width: 200,
         displayField: 'val',
-        store: tvheadend.channelTags,
+        store: tvheadend.getChannelTags(),
         mode: 'local',
         editable: true,
         forceSelection: true,
@@ -806,7 +817,7 @@ tvheadend.epg = function() {
     /// We have to pass the name, not the field, since the
     /// field is deleted and re-created inside clear filter.
     function createFilterCat(clearFilter, cat) {
-      var filter = new Ext.form.ComboBox({
+      var filter = new Ext.ux.form.ComboAny({
         loadingText: _('Loading...'),
         width: 200,
         displayField: 'val',
@@ -857,7 +868,7 @@ tvheadend.epg = function() {
 
     // Content groups
 
-    var epgFilterContentGroup = new Ext.form.ComboBox({
+    var epgFilterContentGroup = new Ext.ux.form.ComboAny({
         loadingText: _('Loading...'),
         width: 200,
         displayField: 'val',
@@ -878,7 +889,7 @@ tvheadend.epg = function() {
         }
     });
 
-    var epgFilterDuration = new Ext.form.ComboBox({
+    var epgFilterDuration = new Ext.ux.form.ComboAny({
         loadingText: _('Loading...'),
         width: 150,
         displayField: 'label',

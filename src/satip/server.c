@@ -133,6 +133,8 @@ satip_server_http_xml(http_connection_t *hc)
     {}
   };
 
+  if (http_server_ip == NULL)
+    return HTTP_STATUS_NOT_FOUND;
 
   htsbuf_queue_init(&q, 0);
 
@@ -262,11 +264,11 @@ int
 satip_server_http_page(http_connection_t *hc,
                        const char *remain, void *opaque)
 {
-  if (strcmp(remain, "desc.xml") == 0)
+  if (remain && strcmp(remain, "desc.xml") == 0)
     return satip_server_http_xml(hc);
-  if (strcmp(remain, "satip.m3u") == 0)
+  if (remain && strcmp(remain, "satip.m3u") == 0)
     return satip_server_satip_m3u(hc);
-  return 0;
+  return HTTP_STATUS_BAD_REQUEST;
 }
 
 /*
@@ -643,23 +645,23 @@ const idclass_t satip_server_class = {
   .ic_changed    = satip_server_class_changed,
   .ic_groups     = (const property_group_t[]) {
       {
-         .name   = N_("General"),
+         .name   = N_("General Settings"),
          .number = 1,
       },
       {
-         .name   = N_("NAT"),
+         .name   = N_("NAT Settings"),
          .number = 2,
       },
       {
-         .name   = N_("Signal"),
+         .name   = N_("Signal Settings"),
          .number = 3,
       },
       {
-         .name   = N_("Exported tuners"),
+         .name   = N_("Exported Tuner(s) Settings"),
          .number = 4,
       },
       {
-         .name   = N_("Other"),
+         .name   = N_("Miscellaneous Settings"),
          .number = 5,
       },
       {}
@@ -783,6 +785,19 @@ const idclass_t satip_server_class = {
       .desc   = N_("Advertise only NAT address and port in RTSP commands,"
                    "even for local connections."),
       .off    = offsetof(struct satip_server_conf, satip_nat_name_force),
+      .opts   = PO_EXPERT,
+      .group  = 2,
+    },
+    {
+      .type   = PT_STR,
+      .id     = "satip_rtp_src_ip",
+      .name   = N_("RTP Local bind IP address"),
+      .desc   = N_("Bind RTP source address of the outgoing RTP packets "
+                   "to specific local IP address "
+                   "(empty = same IP as the listening RTSP; "
+                   "0.0.0.0 = IP in network of default gateway; "
+                   "or write here a valid local IP address)."),
+      .off    = offsetof(struct satip_server_conf, satip_rtp_src_ip),
       .opts   = PO_EXPERT,
       .group  = 2,
     },
@@ -954,7 +969,7 @@ static void satip_server_init_common(const char *prefix, int announce)
   struct sockaddr_storage http;
   char http_ip[128];
   int descramble, rewrite_pmt, muxcnf;
-  char *nat_ip;
+  char *nat_ip, *rtp_src_ip;
   int nat_port;
 
   if (satip_server_rtsp_port <= 0)
@@ -979,13 +994,14 @@ static void satip_server_init_common(const char *prefix, int announce)
   muxcnf = satip_server_conf.satip_muxcnf;
   nat_ip = strdup(satip_server_conf.satip_nat_ip ?: "");
   nat_port = satip_server_conf.satip_nat_rtsp ?: satip_server_rtsp_port;
+  rtp_src_ip = strdup(satip_server_conf.satip_rtp_src_ip ?: "");
 
   if (announce)
     pthread_mutex_unlock(&global_lock);
 
   pthread_mutex_lock(&satip_server_reinit);
 
-  satip_server_rtsp_init(http_server_ip, satip_server_rtsp_port, descramble, rewrite_pmt, muxcnf, nat_ip, nat_port);
+  satip_server_rtsp_init(http_server_ip, satip_server_rtsp_port, descramble, rewrite_pmt, muxcnf, rtp_src_ip, nat_ip, nat_port);
   satip_server_info(prefix, descramble, muxcnf);
 
   if (announce)
@@ -997,6 +1013,7 @@ static void satip_server_init_common(const char *prefix, int announce)
     pthread_mutex_lock(&global_lock);
 
   free(nat_ip);
+  free(rtp_src_ip);
 }
 
 /*

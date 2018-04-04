@@ -143,7 +143,7 @@ const idclass_t epggrab_mod_class = {
   .ic_changed    = epggrab_mod_class_changed,
   .ic_groups     = (const property_group_t[]) {
      {
-        .name   = N_("Settings"),
+        .name   = N_("Grabber Settings"),
         .number = 1,
      },
      {}
@@ -301,6 +301,19 @@ const idclass_t epggrab_mod_ota_scraper_class = {
     },
     {
       .type   = PT_BOOL,
+      .id     = "scrape_title",
+      .name   = N_("Scrape Title"),
+      .desc   = N_("Enable/disable scraping title from the programme title and description. "
+                   "Some broadcasters can split the title over the separate title, "
+                   "and summary fields. This allows scraping of common split title formats "
+                   "from within the broadcast title and summary field if supported by the "
+                   "configuration file."
+                   ),
+      .off    = offsetof(epggrab_module_ota_scraper_t, scrape_title),
+      .group  = 2,
+    },
+    {
+      .type   = PT_BOOL,
       .id     = "scrape_subtitle",
       .name   = N_("Scrape Subtitle"),
       .desc   = N_("Enable/disable scraping subtitle from the programme description. "
@@ -310,6 +323,19 @@ const idclass_t epggrab_mod_ota_scraper_class = {
                    "configuration file."
                    ),
       .off    = offsetof(epggrab_module_ota_scraper_t, scrape_subtitle),
+      .group  = 2,
+    },
+    {
+      .type   = PT_BOOL,
+      .id     = "scrape_summary",
+      .name   = N_("Scrape Summary"),
+      .desc   = N_("Enable/disable scraping summary from the programme description. "
+                   "Some broadcasters do not send separate title, subtitle, description, "
+                   "and summary fields. This allows scraping of a modified summary "
+                   "from within the broadcast summary field if supported by the "
+                   "configuration file."
+                   ),
+      .off    = offsetof(epggrab_module_ota_scraper_t, scrape_summary),
       .group  = 2,
     },
     {}
@@ -555,14 +581,14 @@ static void _epggrab_socket_handler ( epggrab_module_ext_t *mod, int s )
  */
 static void *_epggrab_socket_thread ( void *p )
 {
-  int s;
+  int s, s1;
   epggrab_module_ext_t *mod = (epggrab_module_ext_t*)p;
   tvhinfo(mod->subsys, "%s: external socket enabled", mod->id);
 
-  while ( mod->enabled && mod->sock ) {
+  while (mod->enabled && (s1 = atomic_get(&mod->sock)) >= 0) {
     tvhdebug(mod->subsys, "%s: waiting for connection", mod->id);
-    s = accept(mod->sock, NULL, NULL);
-    if (s <= 0) continue;
+    s = accept(s1, NULL, NULL);
+    if (s < 0) continue;
     tvhdebug(mod->subsys, "%s: got connection %d", mod->id, s);
     _epggrab_socket_handler(mod, s);
     close(s);
@@ -582,8 +608,7 @@ epggrab_module_done_socket( void *m )
 
   assert(mod->type == EPGGRAB_EXT);
   mod->active = 0;
-  sock = mod->sock;
-  mod->sock = 0;
+  sock = atomic_exchange(&mod->sock, -1);
   shutdown(sock, SHUT_RDWR);
   close(sock);
   if (mod->tid) {
@@ -607,9 +632,10 @@ epggrab_module_activate_socket ( void *m, int a )
   epggrab_module_ext_t *mod = (epggrab_module_ext_t*)m;
   const char *path;
   assert(mod->type == EPGGRAB_EXT);
+  int sock;
 
   /* Ignore */
-  if ( mod->active == a ) return 0;
+  if (mod->active == a) return 0;
 
   /* Disable */
   if (!a) {
@@ -621,30 +647,29 @@ epggrab_module_activate_socket ( void *m, int a )
     unlink(mod->path); // just in case!
     hts_settings_makedirs(mod->path);
 
-    mod->sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    assert(mod->sock);
+    sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    assert(sock >= 0);
 
     memset(&addr, 0, sizeof(struct sockaddr_un));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, mod->path, 100);
-    if ( bind(mod->sock, (struct sockaddr*)&addr,
-             sizeof(struct sockaddr_un)) != 0 ) {
-      tvherror(mod->subsys, "%s: failed to bind socket", mod->id);
-      close(mod->sock);
-      mod->sock = 0;
+    if (bind(sock, (struct sockaddr*)&addr,
+             sizeof(struct sockaddr_un)) != 0) {
+      tvherror(mod->subsys, "%s: failed to bind socket: %s", mod->id, strerror(errno));
+      close(sock);
       return 0;
     }
 
-    if ( listen(mod->sock, 5) != 0 ) {
-      tvherror(mod->subsys, "%s: failed to listen on socket", mod->id);
-      close(mod->sock);
-      mod->sock = 0;
+    if (listen(sock, 5) != 0) {
+      tvherror(mod->subsys, "%s: failed to listen on socket: %s", mod->id, strerror(errno));
+      close(sock);
       return 0;
     }
 
     tvhdebug(mod->subsys, "%s: starting socket thread", mod->id);
     pthread_attr_init(&tattr);
     mod->active = 1;
+    atomic_set(&mod->sock, sock);
     tvhthread_create(&mod->tid, &tattr, _epggrab_socket_thread, mod, "epggrabso");
   }
   return 1;
@@ -664,6 +689,7 @@ epggrab_module_ext_t *epggrab_module_ext_create
 
   /* Allocate data */
   if (!skel) skel = calloc(1, sizeof(epggrab_module_ext_t));
+  atomic_set(&skel->sock, -1);
 
   /* Pass through */
   hts_settings_buildpath(path, sizeof(path), "epggrab/%s.sock", sockid);

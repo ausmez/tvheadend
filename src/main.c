@@ -47,7 +47,7 @@
 #include "spawn.h"
 #include "subscriptions.h"
 #include "service_mapper.h"
-#include "descrambler.h"
+#include "descrambler/descrambler.h"
 #include "dvr/dvr.h"
 #include "htsp_server.h"
 #include "satip/server.h"
@@ -75,6 +75,7 @@
 #include "packet.h"
 #include "streaming.h"
 #include "memoryinfo.h"
+#include "watchdog.h"
 #if CONFIG_LINUXDVB_CA
 #include "input/mpegts/en50221/en50221.h"
 #endif
@@ -139,7 +140,8 @@ static cmdline_opt_t* cmdline_opt_find
 /*
  * Globals
  */
-int              tvheadend_running;
+int              tvheadend_running; /* do not use directly: tvheadend_is_running() */
+int              tvheadend_mainloop;
 int              tvheadend_webui_port;
 int              tvheadend_webui_debug;
 int              tvheadend_htsp_port;
@@ -609,6 +611,11 @@ mtimer_thread(void *aux)
   const char *id;
   const char *fcn;
 #endif
+
+  pthread_mutex_lock(&global_lock);
+  while (tvheadend_is_running() && atomic_get(&tvheadend_mainloop) == 0)
+    tvh_cond_wait(&mtimer_cond, &global_lock);
+  pthread_mutex_unlock(&global_lock);
 
   while (tvheadend_is_running()) {
     now = mdispatch_clock_update();
@@ -1087,7 +1094,7 @@ main(int argc, char **argv)
 
   uuid_init();
   idnode_boot();
-  config_boot(opt_config, gid, uid);
+  config_boot(opt_config, gid, uid, opt_user_agent);
   tcp_server_preinit(opt_ipv6);
   http_server_init(opt_bindaddr);    // bind to ports only
   htsp_init(opt_bindaddr);	     // bind to ports only
@@ -1142,6 +1149,7 @@ main(int argc, char **argv)
   }
 
   atomic_set(&tvheadend_running, 1);
+  atomic_set(&tvheadend_mainloop, 0);
 
   /* Start log thread (must be done post fork) */
   tvhlog_start();
@@ -1196,6 +1204,7 @@ main(int argc, char **argv)
   epg_in_load = 1;
 
   tvhthread_create(&mtimer_tick_tid, NULL, mtimer_tick_thread, NULL, "mtick");
+  tvhthread_create(&mtimer_tid, NULL, mtimer_thread, NULL, "mtimer");
   tvhthread_create(&tasklet_tid, NULL, tasklet_thread, NULL, "tasklet");
 
 #if CONFIG_LINUXDVB_CA
@@ -1213,10 +1222,11 @@ main(int argc, char **argv)
   tvhftrace(LS_MAIN, codec_init);
   tvhftrace(LS_MAIN, profile_init);
   tvhftrace(LS_MAIN, imagecache_init);
-  tvhftrace(LS_MAIN, http_client_init, opt_user_agent);
+  tvhftrace(LS_MAIN, http_client_init);
   tvhftrace(LS_MAIN, esfilter_init);
   tvhftrace(LS_MAIN, bouquet_init);
   tvhftrace(LS_MAIN, service_init);
+  tvhftrace(LS_MAIN, descrambler_init);
   tvhftrace(LS_MAIN, dvb_init);
 #if ENABLE_MPEGTS
   tvhftrace(LS_MAIN, mpegts_init, adapter_mask, opt_nosatip, &opt_satip_xml,
@@ -1236,7 +1246,6 @@ main(int argc, char **argv)
   tvhftrace(LS_MAIN, upnp_server_init, opt_bindaddr);
 #endif
   tvhftrace(LS_MAIN, service_mapper_init);
-  tvhftrace(LS_MAIN, descrambler_init);
   tvhftrace(LS_MAIN, epggrab_init);
   tvhftrace(LS_MAIN, epg_init);
   tvhftrace(LS_MAIN, dvr_init);
@@ -1255,6 +1264,8 @@ main(int argc, char **argv)
   epg_in_load = 0;
 
   pthread_mutex_unlock(&global_lock);
+
+  tvhftrace(LS_MAIN, watchdog_init);
 
   /**
    * Wait for SIGTERM / SIGINT, but only in this thread
@@ -1278,7 +1289,10 @@ main(int argc, char **argv)
   if(opt_abort)
     abort();
 
-  tvhthread_create(&mtimer_tid, NULL, mtimer_thread, NULL, "mtimer");
+  pthread_mutex_lock(&global_lock);
+  tvheadend_mainloop = 1;
+  tvh_cond_signal(&mtimer_cond, 0);
+  pthread_mutex_unlock(&global_lock);
   mainloop();
   pthread_mutex_lock(&global_lock);
   tvh_cond_signal(&mtimer_cond, 0);
@@ -1339,7 +1353,6 @@ main(int argc, char **argv)
   tvhtrace(LS_MAIN, "mtimer tick thread join leave");
 
   tvhftrace(LS_MAIN, dvb_done);
-  tvhftrace(LS_MAIN, lang_str_done);
   tvhftrace(LS_MAIN, esfilter_done);
   tvhftrace(LS_MAIN, profile_done);
   tvhftrace(LS_MAIN, codec_done);
@@ -1382,6 +1395,8 @@ main(int argc, char **argv)
 #endif
   tvh_gettext_done();
   free((char *)tvheadend_webroot);
+
+  tvhftrace(LS_MAIN, watchdog_done);
   return 0;
 }
 

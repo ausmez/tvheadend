@@ -291,7 +291,7 @@ const idclass_t profile_class =
   .ic_delete     = profile_class_delete,
   .ic_groups     = (const property_group_t[]) {
     {
-      .name   = N_("Configuration"),
+      .name   = N_("General Settings"),
       .number = 1,
     },
     {}
@@ -304,6 +304,16 @@ const idclass_t profile_class =
       .opts     = PO_RDONLY | PO_HIDDEN,
       .get      = profile_class_class_get,
       .set      = profile_class_class_set,
+      .group    = 1
+    },
+    {
+      .type     = PT_STR,
+      .id       = "name",
+      .name     = N_("Profile name"),
+      .desc     = N_("The name of the profile."),
+      .off      = offsetof(profile_t, pro_name),
+      .get_opts = profile_class_name_opts,
+      .notify   = idnode_notify_title_changed_lang,
       .group    = 1
     },
     {
@@ -328,21 +338,21 @@ const idclass_t profile_class =
     },
     {
       .type     = PT_STR,
-      .id       = "name",
-      .name     = N_("Profile name"),
-      .desc     = N_("The name of the profile."),
-      .off      = offsetof(profile_t, pro_name),
-      .get_opts = profile_class_name_opts,
-      .notify   = idnode_notify_title_changed_lang,
-      .group    = 1
-    },
-    {
-      .type     = PT_STR,
       .id       = "comment",
       .name     = N_("Comment"),
       .desc     = N_("Free-form text field. You can enter whatever you "
                      "like here."),
       .off      = offsetof(profile_t, pro_comment),
+      .group    = 1
+    },
+    {
+      .type     = PT_INT,
+      .id       = "timeout",
+      .name     = N_("Timeout (sec) (0=infinite)"),
+      .desc     = N_("The number of seconds to wait for a stream to "
+                     "start."),
+      .off      = offsetof(profile_t, pro_timeout),
+      .def.i    = 5,
       .group    = 1
     },
     {
@@ -369,16 +379,6 @@ const idclass_t profile_class =
       .group    = 1
     },
     {
-      .type     = PT_INT,
-      .id       = "timeout",
-      .name     = N_("Timeout (sec) (0=infinite)"),
-      .desc     = N_("The number of seconds to wait for a stream to "
-                     "start."),
-      .off      = offsetof(profile_t, pro_timeout),
-      .def.i    = 5,
-      .group    = 1
-    },
-    {
       .type     = PT_BOOL,
       .id       = "restart",
       .name     = N_("Restart on error"),
@@ -387,7 +387,7 @@ const idclass_t profile_class =
       .off      = offsetof(profile_t, pro_restart),
       .opts     = PO_EXPERT,
       .def.i    = 0,
-      .group    = 1
+      .group    = 1,
     },
     {
       .type     = PT_BOOL,
@@ -399,7 +399,7 @@ const idclass_t profile_class =
       .off      = offsetof(profile_t, pro_contaccess),
       .opts     = PO_EXPERT,
       .def.i    = 1,
-      .group    = 1
+      .group    = 1,
     },
     {
       .type     = PT_INT,
@@ -409,7 +409,7 @@ const idclass_t profile_class =
       .off      = offsetof(profile_t, pro_ca_timeout),
       .opts     = PO_EXPERT,
       .def.i    = 2000,
-      .group    = 1
+      .group    = 1,
     },
     {
       .type     = PT_BOOL,
@@ -936,11 +936,13 @@ profile_sharer_create(profile_sharer_t *prsh,
                       streaming_target_t *dst)
 {
   prch->prch_post_share = dst;
+  pthread_mutex_lock(&prsh->prsh_queue_mutex);
   prch->prch_ts_delta = LIST_EMPTY(&prsh->prsh_chains) ? 0 : PTS_UNSET;
   LIST_INSERT_HEAD(&prsh->prsh_chains, prch, prch_sharer_link);
   prch->prch_sharer = prsh;
   if (!prsh->prsh_master)
     prsh->prsh_master = prch;
+  pthread_mutex_unlock(&prsh->prsh_queue_mutex);
   return 0;
 }
 
@@ -952,22 +954,27 @@ profile_sharer_destroy(profile_chain_t *prch)
 {
   profile_sharer_t *prsh = prch->prch_sharer;
   profile_sharer_message_t *psm, *psm2;
+  int run = 0;
 
   if (prsh == NULL)
     return;
+  pthread_mutex_lock(&prsh->prsh_queue_mutex);
   LIST_REMOVE(prch, prch_sharer_link);
   if (LIST_EMPTY(&prsh->prsh_chains)) {
-    if (prsh->prsh_queue_run) {
-      pthread_mutex_lock(&prsh->prsh_queue_mutex);
+    if ((run = prsh->prsh_queue_run) != 0) {
       prsh->prsh_queue_run = 0;
       tvh_cond_signal(&prsh->prsh_queue_cond, 0);
-      pthread_mutex_unlock(&prsh->prsh_queue_mutex);
-      pthread_join(prsh->prsh_queue_thread, NULL);
-      while ((psm = TAILQ_FIRST(&prsh->prsh_queue)) != NULL) {
-        streaming_msg_free(psm->psm_sm);
-        TAILQ_REMOVE(&prsh->prsh_queue, psm, psm_link);
-        free(psm);
-      }
+    }
+    prch->prch_sharer = NULL;
+    prch->prch_post_share = NULL;
+  }
+  pthread_mutex_unlock(&prsh->prsh_queue_mutex);
+  if (run) {
+    pthread_join(prsh->prsh_queue_thread, NULL);
+    while ((psm = TAILQ_FIRST(&prsh->prsh_queue)) != NULL) {
+      streaming_msg_free(psm->psm_sm);
+      TAILQ_REMOVE(&prsh->prsh_queue, psm, psm_link);
+      free(psm);
     }
     if (prsh->prsh_tsfix)
       tsfix_destroy(prsh->prsh_tsfix);
@@ -978,8 +985,6 @@ profile_sharer_destroy(profile_chain_t *prch)
     if (prsh->prsh_start_msg)
       streaming_start_unref(prsh->prsh_start_msg);
     free(prsh);
-    prch->prch_sharer = NULL;
-    prch->prch_post_share = NULL;
   } else {
     if (prsh->prsh_queue_run) {
       pthread_mutex_lock(&prsh->prsh_queue_mutex);
@@ -994,13 +999,19 @@ profile_sharer_destroy(profile_chain_t *prch)
         TAILQ_REMOVE(&prsh->prsh_queue, psm, psm_link);
         free(psm);
       }
-    }
-    prch->prch_sharer = NULL;
-    prch->prch_post_share = NULL;
-    if (prsh->prsh_master == prch)
-      prsh->prsh_master = NULL;
-    if (prsh->prsh_queue_run)
+      prch->prch_sharer = NULL;
+      prch->prch_post_share = NULL;
+      if (prsh->prsh_master == prch)
+        prsh->prsh_master = NULL;
       pthread_mutex_unlock(&prsh->prsh_queue_mutex);
+    } else {
+      pthread_mutex_lock(&prsh->prsh_queue_mutex);
+      prch->prch_sharer = NULL;
+      prch->prch_post_share = NULL;
+      if (prsh->prsh_master == prch)
+        prsh->prsh_master = NULL;
+      pthread_mutex_unlock(&prsh->prsh_queue_mutex);
+    }
   }
 }
 
@@ -1308,11 +1319,11 @@ const idclass_t profile_mpegts_pass_class =
   .ic_caption    = N_("MPEG-TS Pass-thru/built-in"),
   .ic_groups     = (const property_group_t[]) {
     {
-      .name   = N_("Configuration"),
+      .name   = N_("General Settings"),
       .number = 1,
     },
     {
-      .name   = N_("Rewrite MPEG-TS SI tables"),
+      .name   = N_("Rewrite MPEG-TS SI Table(s) Settings"),
       .number = 2,
     },
     {}
@@ -1460,11 +1471,11 @@ const idclass_t profile_mpegts_spawn_class =
   .ic_caption    = N_("MPEG-TS Spawn/built-in"),
   .ic_groups     = (const property_group_t[]) {
     {
-      .name   = N_("Configuration"),
+      .name   = N_("General Settings"),
       .number = 1,
     },
     {
-      .name   = N_("Spawn configuration"),
+      .name   = N_("Spawn Settings"),
       .number = 2,
     },
     {}
@@ -1597,11 +1608,11 @@ const idclass_t profile_matroska_class =
   .ic_caption    = N_("Matroska (mkv)/built-in"),
   .ic_groups     = (const property_group_t[]) {
     {
-      .name   = N_("Configuration"),
+      .name   = N_("General Settings"),
       .number = 1,
     },
     {
-      .name   = N_("Matroska specific"),
+      .name   = N_("Matroska Specific Settings"),
       .number = 2,
     },
     {}
@@ -2225,11 +2236,11 @@ const idclass_t profile_transcode_class =
   .ic_caption    = N_("Transcode/av-lib"),
   .ic_groups     = (const property_group_t[]) {
     {
-      .name   = N_("Configuration"),
+      .name   = N_("General Settings"),
       .number = 1,
     },
     {
-      .name   = N_("Transcoding"),
+      .name   = N_("Transcoding Settings"),
       .number = 2,
     },
     {}

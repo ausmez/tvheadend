@@ -25,6 +25,7 @@
 #endif
 
 #include "atomic.h"
+#include "sbuf.h"
 #include "input.h"
 #include "service.h"
 #include "mpegts/dvb.h"
@@ -110,9 +111,12 @@ static inline int mpegts_pid_wexists ( mpegts_apids_t *pids, uint16_t pid, uint1
 static inline int mpegts_pid_rexists ( mpegts_apids_t *pids, uint16_t pid )
   { return pids && (pids->all || mpegts_pid_find_rindex(pids, pid) >= 0); }
 int mpegts_pid_copy ( mpegts_apids_t *dst, mpegts_apids_t *src );
+int mpegts_pid_cmp ( mpegts_apids_t *a, mpegts_apids_t *b );
 int mpegts_pid_compare ( mpegts_apids_t *dst, mpegts_apids_t *src,
                          mpegts_apids_t *add, mpegts_apids_t *del );
-int mpegts_pid_weighted( mpegts_apids_t *dst, mpegts_apids_t *src, int limit );
+int mpegts_pid_compare_weight ( mpegts_apids_t *dst, mpegts_apids_t *src,
+                                mpegts_apids_t *add, mpegts_apids_t *del );
+int mpegts_pid_weighted ( mpegts_apids_t *dst, mpegts_apids_t *src, int limit, int mweight );
 int mpegts_pid_dump ( mpegts_apids_t *pids, char *buf, int len, int wflag, int raw );
 
 /* **************************************************************************
@@ -152,37 +156,41 @@ typedef struct mpegts_pid_sub
   RB_ENTRY(mpegts_pid_sub) mps_link;
   LIST_ENTRY(mpegts_pid_sub) mps_raw_link;
   LIST_ENTRY(mpegts_pid_sub) mps_svcraw_link;
-#define MPS_NONE    0x00
-#define MPS_ALL     0x01
-#define MPS_RAW     0x02
-#define MPS_STREAM  0x04
-#define MPS_SERVICE 0x08
-#define MPS_TABLE   0x10
-#define MPS_FTABLE  0x20
-#define MPS_TABLES  0x40
+#define MPS_NONE         0x00
+#define MPS_ALL          0x01
+#define MPS_RAW          0x02
+#define MPS_STREAM       0x04
+#define MPS_SERVICE      0x08
+#define MPS_TABLE        0x10
+#define MPS_FTABLE       0x20
+#define MPS_TABLES       0x40
+#define MPS_NOPOSTDEMUX  0x80
   int   mps_type;
-#define MPS_WEIGHT_PAT     1000
-#define MPS_WEIGHT_CAT      999
-#define MPS_WEIGHT_SDT      999
-#define MPS_WEIGHT_NIT      999
-#define MPS_WEIGHT_BAT      999
-#define MPS_WEIGHT_VCT      999
-#define MPS_WEIGHT_EIT      999
-#define MPS_WEIGHT_ETT      999
-#define MPS_WEIGHT_MGT      999
-#define MPS_WEIGHT_PMT      998
-#define MPS_WEIGHT_PCR      997
-#define MPS_WEIGHT_CA       996
-#define MPS_WEIGHT_VIDEO    900
-#define MPS_WEIGHT_AUDIO    800
-#define MPS_WEIGHT_SUBTITLE 700
-#define MPS_WEIGHT_ESOTHER  500
-#define MPS_WEIGHT_RAW      400
-#define MPS_WEIGHT_NIT2     300
-#define MPS_WEIGHT_SDT2     300
-#define MPS_WEIGHT_TDT      101
-#define MPS_WEIGHT_STT      101
-#define MPS_WEIGHT_PMT_SCAN 100
+#define MPS_WEIGHT_PAT       1000
+#define MPS_WEIGHT_CAT        999
+#define MPS_WEIGHT_SDT        999
+#define MPS_WEIGHT_NIT        999
+#define MPS_WEIGHT_BAT        999
+#define MPS_WEIGHT_VCT        999
+#define MPS_WEIGHT_EIT        999
+#define MPS_WEIGHT_ETT        999
+#define MPS_WEIGHT_MGT        999
+#define MPS_WEIGHT_PMT        998
+#define MPS_WEIGHT_PCR        997
+#define MPS_WEIGHT_CA         996
+#define MPS_WEIGHT_VIDEO      900
+#define MPS_WEIGHT_AUDIO      800
+#define MPS_WEIGHT_SUBTITLE   700
+#define MPS_WEIGHT_ESOTHER    500
+#define MPS_WEIGHT_RAW        400
+#define MPS_WEIGHT_NIT2       300
+#define MPS_WEIGHT_SDT2       300
+#define MPS_WEIGHT_ALLLIMIT   200 /* values under this limit does not switch */
+                                  /* input to the unfiltered PIDs (all) mode */
+#define MPS_WEIGHT_TDT        102
+#define MPS_WEIGHT_STT        102
+#define MPS_WEIGHT_PMT_SCAN   101
+#define MPS_WEIGHT_HBBTV_SCAN 100
   int   mps_weight;
   void *mps_owner;
 } mpegts_pid_sub_t;
@@ -280,6 +288,8 @@ struct mpegts_table_feed {
   uint8_t mtf_tsb[0];
 };
 
+#define MPEGTS_MTF_ALLOC_CHUNK (21*188)
+
 /* **************************************************************************
  * Logical network
  * *************************************************************************/
@@ -347,6 +357,7 @@ struct mpegts_network
     (mpegts_mux_t*, uint16_t sid, uint16_t pmt_pid);
   const idclass_t*  (*mn_mux_class)   (mpegts_network_t*);
   mpegts_mux_t *    (*mn_mux_create2) (mpegts_network_t *mn, htsmsg_t *conf);
+  void              (*mn_scan)        (mpegts_network_t*);
 
   /*
    * Configuration
@@ -415,12 +426,6 @@ enum mpegts_mux_ac3_flag
   MM_AC3_PMT_N05,
 };
 
-typedef struct tsdebug_packet {
-  TAILQ_ENTRY(tsdebug_packet) link;
-  uint8_t pkt[188];
-  off_t pos;
-} tsdebug_packet_t;
-
 /* Multiplex */
 struct mpegts_mux
 {
@@ -433,6 +438,7 @@ struct mpegts_mux
   
   LIST_ENTRY(mpegts_mux)  mm_network_link;
   mpegts_network_t       *mm_network;
+  char                   *mm_nicename;
   char                   *mm_provider_network_name;
   uint16_t                mm_onid;
   uint16_t                mm_tsid;
@@ -489,6 +495,7 @@ struct mpegts_mux
    * Data processing
    */
 
+  uint64_t                    mm_input_pos;
   RB_HEAD(, mpegts_pid)       mm_pids;
   LIST_HEAD(, mpegts_pid_sub) mm_all_subs;
   int                         mm_last_pid;
@@ -532,17 +539,6 @@ struct mpegts_mux
   int      mm_pmt_ac3;
   int      mm_eit_tsid_nocheck;
   uint16_t mm_sid_filter;
-
-  /*
-   * TSDEBUG
-   */
-#if ENABLE_TSDEBUG
-  pthread_mutex_t mm_tsdebug_lock;
-  int             mm_tsdebug_fd;
-  int             mm_tsdebug_fd2;
-  off_t           mm_tsdebug_pos;
-  TAILQ_HEAD(, tsdebug_packet) mm_tsdebug_packets;
-#endif
 };
 
 #define PREFCAPID_OFF      0
@@ -563,8 +559,7 @@ struct mpegts_service
 
   mpegts_apids_t             *s_pids;
   idnode_set_t                s_masters;
-  LIST_HEAD(, mpegts_service) s_slaves;
-  LIST_ENTRY(mpegts_service)  s_slaves_link;
+  idnode_set_t                s_slaves;
   mpegts_apids_t             *s_slaves_pids;
 
   /*
@@ -574,7 +569,6 @@ struct mpegts_service
   uint32_t s_dvb_channel_num;
   uint16_t s_dvb_channel_minor;
   uint8_t  s_dvb_channel_dtag;
-  uint16_t s_dvb_service_id;
   char    *s_dvb_svcname;
   char    *s_dvb_provider;
   char    *s_dvb_cridauth;
@@ -892,6 +886,11 @@ mpegts_mux_t *mpegts_mux_create0
   mpegts_mux_create0(calloc(1, sizeof(mpegts_mux_t)), &mpegts_mux_class, uuid,\
                      mn, onid, tsid, conf)
 
+mpegts_mux_t *mpegts_mux_post_create(mpegts_mux_t *mm);
+
+static inline mpegts_mux_t *mpegts_mux_find0(tvh_uuid_t *uuid)
+  { return idnode_find0(uuid, &mpegts_mux_class, NULL); }
+
 static inline mpegts_mux_t *mpegts_mux_find(const char *uuid)
   { return idnode_find(uuid, &mpegts_mux_class, NULL); }
 
@@ -985,8 +984,11 @@ void mpegts_mux_update_pids ( mpegts_mux_t *mm );
 int mpegts_mux_compare ( mpegts_mux_t *a, mpegts_mux_t *b );
 
 void mpegts_input_recv_packets
-  (mpegts_input_t *mi, mpegts_mux_instance_t *mmi, sbuf_t *sb,
+  (mpegts_mux_instance_t *mmi, sbuf_t *sb,
    int flags, mpegts_pcr_t *pcr);
+
+void mpegts_input_postdemux
+  ( mpegts_input_t *mi, mpegts_mux_t *mm, uint8_t *data, int len );
 
 int mpegts_input_get_weight ( mpegts_input_t *mi, mpegts_mux_t *mm, int flags, int weight );
 int mpegts_input_get_priority ( mpegts_input_t *mi, mpegts_mux_t *mm, int flags );
@@ -1002,6 +1004,9 @@ mpegts_pid_t * mpegts_input_open_pid
     void *owner, int reopen );
 
 int mpegts_input_close_pid
+  ( mpegts_input_t *mi, mpegts_mux_t *mm, int pid, int type, void *owner );
+
+mpegts_pid_t * mpegts_input_update_pid_weight
   ( mpegts_input_t *mi, mpegts_mux_t *mm, int pid, int type, int weight,
     void *owner );
 
@@ -1014,49 +1019,20 @@ elementary_stream_t *mpegts_input_open_service_pid
 
 void mpegts_input_open_cat_monitor ( mpegts_mux_t *mm, mpegts_service_t *s );
 
-#if ENABLE_TSDEBUG
+void tsdebug_encode_keys
+  ( uint8_t *dst, uint16_t sid, uint16_t pid,
+    uint8_t keytype, uint8_t keylen, uint8_t *even, uint8_t *odd );
 
-void tsdebug_started_mux(mpegts_input_t *mi, mpegts_mux_t *mm);
-void tsdebug_stopped_mux(mpegts_input_t *mi, mpegts_mux_t *mm);
-void tsdebug_check_tspkt(mpegts_mux_t *mm, uint8_t *pkt, int len);
+void tsdebug_check_tspkt( mpegts_mux_t *mm, uint8_t *pkt, int len );
 
-static inline void
-tsdebug_write(mpegts_mux_t *mm, uint8_t *buf, size_t len)
-{
-  if (mm && mm->mm_tsdebug_fd2 >= 0)
-    if (write(mm->mm_tsdebug_fd2, buf, len) != len)
-      tvherror(LS_TSDEBUG, "unable to write input data (%i)", errno);
-}
-
-static inline ssize_t
-sbuf_tsdebug_read(mpegts_mux_t *mm, sbuf_t *sb, int fd)
-{
-  ssize_t r = sbuf_read(sb, fd);
-  tsdebug_write(mm, sb->sb_data + sb->sb_ptr - r, r);
-  return r;
-}
-
-#else
-
-static inline void tsdebug_started_mux(mpegts_input_t *mi, mpegts_mux_t *mm) { return; }
-static inline void tsdebug_stopped_mux(mpegts_input_t *mi, mpegts_mux_t *mm) { return; }
-static inline void tsdebug_write(mpegts_mux_t *mm, uint8_t *buf, size_t len) { return; }
-static inline ssize_t sbuf_tsdebug_read(mpegts_mux_t *mm, sbuf_t *sb, int fd) { return sbuf_read(sb, fd); }
-
-#endif
-
-void mpegts_table_dispatch
-  (const uint8_t *sec, size_t r, void *mt);
-static inline void mpegts_table_grab
-  (mpegts_table_t *mt)
+void mpegts_table_dispatch(const uint8_t *sec, size_t r, void *mt);
+static inline void mpegts_table_grab(mpegts_table_t *mt)
 {
   int v = atomic_add(&mt->mt_arefcount, 1);
   assert(v > 0);
 }
-void mpegts_table_release_
-  (mpegts_table_t *mt);
-static inline int mpegts_table_release
-  (mpegts_table_t *mt)
+void mpegts_table_release_(mpegts_table_t *mt);
+static inline int mpegts_table_release(mpegts_table_t *mt)
 {
   int v = atomic_dec(&mt->mt_arefcount, 1);
   assert(v > 0);
@@ -1067,20 +1043,20 @@ static inline int mpegts_table_release
   }
   return 0;
 }
-int mpegts_table_type
-  ( mpegts_table_t *mt );
+int mpegts_table_type(mpegts_table_t *mt);
 mpegts_table_t *mpegts_table_add
   (mpegts_mux_t *mm, int tableid, int mask,
    mpegts_table_callback_t callback, void *opaque,
    const char *name, int subsys, int flags, int pid, int weight);
-void mpegts_table_flush_all
-  (mpegts_mux_t *mm);
-void mpegts_table_destroy ( mpegts_table_t *mt );
+mpegts_table_t *mpegts_table_find
+  (mpegts_mux_t *mm, const char *name, void *opaque);
+void mpegts_table_flush_all(mpegts_mux_t *mm);
+void mpegts_table_destroy(mpegts_table_t *mt);
+static inline void mpegts_table_reset(mpegts_table_t *mt)
+  { dvb_table_reset((mpegts_psi_table_t *)mt); }
+void mpegts_table_consistency_check(mpegts_mux_t *mm);
 
-void mpegts_table_consistency_check( mpegts_mux_t *mm );
-
-void dvb_bat_destroy
-  (struct mpegts_table *mt);
+void dvb_bat_destroy(struct mpegts_table *mt);
 
 int dvb_pat_callback
   (struct mpegts_table *mt, const uint8_t *ptr, int len, int tableid);
@@ -1132,7 +1108,13 @@ mpegts_service_find_e2
 mpegts_service_t *
 mpegts_service_find_by_pid ( mpegts_mux_t *mm, int pid );
 
-void mpegts_service_update_slave_pids ( mpegts_service_t *t, int del );
+void mpegts_service_autoenable( mpegts_service_t *s, const char *where );
+
+void mpegts_service_update_slave_pids
+  ( mpegts_service_t *t, mpegts_service_t *master_filter, int del );
+
+static inline mpegts_service_t *mpegts_service_find_by_uuid0(tvh_uuid_t *uuid)
+  { return idnode_find0(uuid, &mpegts_service_class, NULL); }
 
 static inline mpegts_service_t *mpegts_service_find_by_uuid(const char *uuid)
   { return idnode_find(uuid, &mpegts_service_class, NULL); }
@@ -1179,6 +1161,11 @@ LIST_HEAD(,mpegts_listener) mpegts_listeners;
     if (ml->op) ml->op(t, ml->ml_opaque, arg1);\
 } (void)0
 
+/*
+ * misc
+ */
+void eit_nit_callback(mpegts_table_t *mt, uint16_t nbid, const char *name, uint32_t priv);
+
 #endif /* __TVH_MPEGTS_H__ */
 
 /******************************************************************************
@@ -1186,4 +1173,3 @@ LIST_HEAD(,mpegts_listener) mpegts_listeners;
  *
  * vim:sts=2:ts=2:sw=2:et
  *****************************************************************************/
-

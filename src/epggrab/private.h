@@ -167,7 +167,7 @@ void epggrab_ota_complete
 void
 epggrab_ota_service_add
   ( epggrab_ota_map_t *map, epggrab_ota_mux_t *ota,
-    const char *uuid, int save );
+    tvh_uuid_t *uuid, int save );
 void
 epggrab_ota_service_del
   ( epggrab_ota_map_t *map, epggrab_ota_mux_t *ota,
@@ -177,9 +177,8 @@ epggrab_ota_service_del
  * Miscellaneous
  * *************************************************************************/
 
-/* Note: this is reused by pyepg since they share a common format */
 int  xmltv_parse_accessibility
-  ( epg_broadcast_t *ebc, htsmsg_t *m, uint32_t *changes );
+  ( epg_broadcast_t *ebc, htsmsg_t *m, epg_changes_t *changes );
 
 /* Freesat huffman decoder */
 size_t freesat_huffman_decode
@@ -191,10 +190,8 @@ size_t freesat_huffman_decode
 
 extern const idclass_t epggrab_mod_class;
 extern const idclass_t epggrab_mod_int_class;
-extern const idclass_t epggrab_mod_int_pyepg_class;
 extern const idclass_t epggrab_mod_int_xmltv_class;
 extern const idclass_t epggrab_mod_ext_class;
-extern const idclass_t epggrab_mod_ext_pyepg_class;
 extern const idclass_t epggrab_mod_ext_xmltv_class;
 extern const idclass_t epggrab_mod_ota_class;
 extern const idclass_t epggrab_mod_ota_scraper_class;
@@ -212,11 +209,6 @@ void eit_load    ( void );
 void opentv_init ( void );
 void opentv_done ( void );
 void opentv_load ( void );
-
-/* PyEPG module */
-void pyepg_init  ( void );
-void pyepg_done  ( void );
-void pyepg_load  ( void );
 
 /* XMLTV module */
 void xmltv_init  ( void );

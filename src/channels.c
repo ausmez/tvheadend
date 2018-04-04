@@ -46,9 +46,13 @@
 #include "intlconv.h"
 #include "memoryinfo.h"
 
+typedef int (sortfcn_t)(const void *, const void *);
+
 struct channel_tree channels;
+int channels_count;
 
 struct channel_tag_queue channel_tags;
+int channel_tags_count;
 
 const char *channel_blank_name = N_("{name-not-set}");
 static int channel_in_load;
@@ -110,6 +114,14 @@ static void
 channel_class_delete ( idnode_t *self )
 {
   channel_delete((channel_t*)self, 1);
+}
+
+static void
+channel_class_notify_enabled ( void *obj, const char *lang )
+{
+  channel_t *ch = (channel_t *)obj;
+  if (!ch->ch_enabled)
+    channel_remove_subscriber(ch, SM_CODE_CHN_NOT_ENABLED);
 }
 
 static int
@@ -236,6 +248,10 @@ channel_class_get_list(void *o, const char *lang)
   htsmsg_add_str(m, "uri",   "channel/list");
   htsmsg_add_str(m, "event", "channel");
   htsmsg_add_u32(p, "all",  1);
+  if (config.chname_num)
+    htsmsg_add_u32(p, "numbers", 1);
+  if (config.chname_src)
+    htsmsg_add_u32(p, "sources", 1);
   htsmsg_add_msg(m, "params", p);
   return m;
 }
@@ -395,6 +411,7 @@ const idclass_t channel_class = {
       .desc     = N_("Enable/disable the channel."),
       .def.i    = 1,
       .off      = offsetof(channel_t, ch_enabled),
+      .notify   = channel_class_notify_enabled,
     },
     {
       .type     = PT_BOOL,
@@ -459,6 +476,17 @@ const idclass_t channel_class = {
                      "specifically set a different EPG Source."),
       .def.i    = 1,
       .off      = offsetof(channel_t, ch_epgauto),
+      .opts     = PO_ADVANCED,
+    },
+    {
+      .type     = PT_U32,
+      .id       = "epglimit",
+      .name     = N_("Limit EPG (days)"),
+      .desc     = N_("Limit EPG data to specified days to reduce "
+                     "the memory consumption. The zero value means "
+                     "unlimited EPG."),
+      .def.i    = 1,
+      .off      = offsetof(channel_t, ch_epg_limit),
       .opts     = PO_ADVANCED,
     },
     {
@@ -757,6 +785,28 @@ channel_epg_update_all ( channel_t *ch )
    channel_event_updated(e);
 }
 
+/**
+ * Remove all subscribers for given channel
+ */
+void channel_remove_subscriber
+  ( channel_t *ch, int reason )
+{
+  th_subscription_t *s, *s_next;
+  idnode_list_mapping_t *ilm;
+  service_t *t;
+
+  lock_assert(&global_lock);
+
+  LIST_FOREACH(ilm, &ch->ch_services, ilm_in2_link) {
+    t = (service_t *)ilm->ilm_in1;
+    for (s = LIST_FIRST(&t->s_subscriptions); s; s = s_next) {
+      s_next = LIST_NEXT(s, ths_service_link);
+      if (s->ths_channel == ch)
+        service_remove_subscriber(t, s, reason);
+    }
+  }
+}
+
 /* **************************************************************************
  * Property updating
  * *************************************************************************/
@@ -771,6 +821,39 @@ channel_get_name ( channel_t *ch, const char *blank )
     if ((s = service_get_channel_name((service_t *)ilm->ilm_in1)))
       return s;
   return blank;
+}
+
+char *
+channel_get_ename
+  ( channel_t *ch, char *dst, size_t dstlen, const char *blank, uint32_t flags )
+{
+  size_t l = 0;
+  int64_t number;
+  char buf[128];
+  const char *s;
+
+  dst[0] = '\0';
+  if (flags & CHANNEL_ENAME_NUMBERS) {
+    number = channel_get_number(ch);
+    if (number > 0) {
+      if (number % CHANNEL_SPLIT) {
+        tvh_strlcatf(dst, dstlen, l, "%u.%u",
+                     channel_get_major(number),
+                     channel_get_minor(number));
+      } else {
+        tvh_strlcatf(dst, dstlen, l, "%u", channel_get_major(number));
+      }
+    }
+  }
+  s = channel_get_name(ch, blank);
+  if (s)
+    tvh_strlcatf(dst, dstlen, l, "%s%s", l > 0 ? " " : "", s);
+  if (flags & CHANNEL_ENAME_SOURCES) {
+    s = channel_get_source(ch, buf, sizeof(buf));
+    if (s)
+      tvh_strlcatf(dst, dstlen, l, "%s[%s]", l > 0 ? " " : "", s);
+  }
+  return dst;
 }
 
 int
@@ -852,6 +935,40 @@ channel_set_number ( channel_t *ch, uint32_t major, uint32_t minor )
   return save;
 }
 
+char *
+channel_get_number_as_str ( channel_t *ch, char *dst, size_t dstlen )
+{
+  int64_t num = channel_get_number(ch);
+  uint32_t major, minor;
+  if (num == 0) return NULL;
+  major = channel_get_major(num);
+  minor = channel_get_minor(num);
+  if (minor)
+    snprintf(dst, dstlen, "%u.%u", major, minor);
+  else
+    snprintf(dst, dstlen, "%u", major);
+  return dst;
+}
+
+int64_t
+channel_get_number_from_str ( const char *str )
+{
+  return prop_intsplit_from_str(str, CHANNEL_SPLIT);
+}
+
+char *
+channel_get_source ( channel_t *ch, char *dst, size_t dstlen )
+{
+  const char *s;
+  idnode_list_mapping_t *ilm;
+  size_t l = 0;
+  dst[0] = '\0';
+  LIST_FOREACH(ilm, &ch->ch_services, ilm_in2_link)
+    if ((s = service_get_source((service_t *)ilm->ilm_in1)))
+      tvh_strlcatf(dst, dstlen, l, "%s%s", l > 0 ? "," : "", s);
+  return l > 0 ? dst : NULL;
+}
+
 static char *
 svcnamepicons(const char *svcname)
 {
@@ -907,7 +1024,7 @@ channel_get_icon ( channel_t *ch )
              *picon  = config.picon_path,
              *icon   = ch->ch_icon,
              *chname, *icn;
-  uint32_t id, i, pick, prefer = config.prefer_picon ? 1 : 0;
+  int id, i, pick, prefer = config.prefer_picon ? 1 : 0;
   char c;
 
   if (tvh_str_default(icon, NULL) == NULL)
@@ -1106,6 +1223,7 @@ channel_create0
     tvherror(LS_CHANNEL, "id collision!");
     abort();
   }
+  channels_count++;
 
   /* Defaults */
   ch->ch_enabled  = 1;
@@ -1200,6 +1318,7 @@ channel_delete ( channel_t *ch, int delconf )
 
   /* Free memory */
   RB_REMOVE(&channels, ch, ch_link);
+  channels_count--;
   idnode_unlink(&ch->ch_id);
   free(ch->ch_epg_parent);
   free(ch->ch_name);
@@ -1208,9 +1327,82 @@ channel_delete ( channel_t *ch, int delconf )
 }
 
 /**
+ * sorting
+ */
+static int
+channel_cmp1(const void *a, const void *b)
+{
+  int r;
+  channel_t *c1 = *(channel_t **)a, *c2 = *(channel_t **)b;
+  int64_t n1 = channel_get_number(c1), n2 = channel_get_number(c2);
+  if (n1 > n2)
+    r = 1;
+  else if (n1 < n2)
+    r = -1;
+  else
+    r = strcasecmp(channel_get_name(c1, ""), channel_get_name(c2, ""));
+  return r;
+}
+
+static int
+channel_cmp2(const void *a, const void *b)
+{
+  channel_t *c1 = *(channel_t **)a, *c2 = *(channel_t **)b;
+  return strcasecmp(channel_get_name(c1, ""), channel_get_name(c2, ""));
+}
+
+static sortfcn_t *channel_sort_fcn(const char *sort_type)
+{
+  if (sort_type) {
+    if (!strcmp(sort_type, "numname"))
+      return &channel_cmp1;
+    if (!strcmp(sort_type, "name"))
+      return &channel_cmp2;
+  }
+  return &channel_cmp1;
+}
+
+channel_t **
+channel_get_sorted_list(const char *sort_type, int all, int *_count)
+{
+  int count = 0;
+  channel_t *ch, **chlist = malloc(channels_count * sizeof(channel_t *));
+
+  CHANNEL_FOREACH(ch)
+    if (all || ch->ch_enabled)
+      chlist[count++] = ch;
+
+  assert(count <= channels_count);
+  qsort(chlist, count, sizeof(channel_t *), channel_sort_fcn(sort_type));
+
+  *_count = count;
+  return chlist;
+}
+
+channel_t **
+channel_get_sorted_list_for_tag
+  (const char *sort_type, channel_tag_t *tag, int *_count)
+{
+  int count = 0;
+  channel_t *ch, **chlist = malloc(channels_count * sizeof(channel_t *));
+  idnode_list_mapping_t *ilm;
+
+  LIST_FOREACH(ilm, &tag->ct_ctms, ilm_in1_link) {
+    ch = (channel_t *)ilm->ilm_in2;
+    if (ch->ch_enabled)
+      chlist[count++] = ch;
+  }
+
+  assert(count <= channels_count);
+  qsort(chlist, count, sizeof(channel_t *), channel_sort_fcn(sort_type));
+
+  *_count = count;
+  return chlist;
+}
+
+/**
  *
  */
-
 static void channels_memoryinfo_update(memoryinfo_t *my)
 {
   channel_t *ch;
@@ -1243,6 +1435,7 @@ channel_init ( void )
   channel_t *ch, *parent;
   char *s;
 
+  channels_count = 0;
   RB_INIT(&channels);
   memoryinfo_register(&channels_memoryinfo);
   idclass_register(&channel_class);
@@ -1390,6 +1583,7 @@ channel_tag_create(const char *uuid, htsmsg_t *conf)
   htsp_tag_add(ct);
 
   TAILQ_INSERT_TAIL(&channel_tags, ct, ct_link);
+  channel_tags_count++;
   return ct;
 }
 
@@ -1414,6 +1608,7 @@ channel_tag_destroy(channel_tag_t *ct, int delconf)
   htsp_tag_delete(ct);
 
   TAILQ_REMOVE(&channel_tags, ct, ct_link);
+  channel_tags_count--;
   idnode_unlink(&ct->ct_id);
 
   bouquet_destroy_by_channel_tag(ct);
@@ -1434,7 +1629,7 @@ channel_tag_get_icon(channel_tag_t *ct)
 {
   static char buf[64];
   const char *icon  = ct->ct_icon;
-  uint32_t id;
+  int id;
 
   /* Lookup imagecache ID */
   if ((id = imagecache_get_id(icon))) {
@@ -1673,7 +1868,55 @@ channel_tag_find_by_id(uint32_t id) {
 /**
  *
  */
+static int
+channel_tag_cmp1(const void *a, const void *b)
+{
+  channel_tag_t *ct1 = *(channel_tag_t **)a, *ct2 = *(channel_tag_t **)b;
+  int r = ct1->ct_index - ct2->ct_index;
+  if (r == 0)
+    r = strcasecmp(ct1->ct_name, ct2->ct_name);
+  return r;
+}
 
+static int
+channel_tag_cmp2(const void *a, const void *b)
+{
+  channel_tag_t *ct1 = *(channel_tag_t **)a, *ct2 = *(channel_tag_t **)b;
+  return strcasecmp(ct1->ct_name, ct2->ct_name);
+}
+
+static sortfcn_t *channel_tag_sort_fcn(const char *sort_type)
+{
+  if (sort_type) {
+    if (!strcmp(sort_type, "idxname"))
+      return &channel_tag_cmp1;
+    if (!strcmp(sort_type, "name"))
+      return &channel_tag_cmp2;
+  }
+  return &channel_tag_cmp1;
+}
+
+channel_tag_t **
+channel_tag_get_sorted_list(const char *sort_type, int *_count)
+{
+  int count = 0;
+  channel_tag_t *ct, **ctlist;
+
+  ctlist = malloc(channel_tags_count * sizeof(channel_tag_t *));
+
+  TAILQ_FOREACH(ct, &channel_tags, ct_link)
+    if(ct->ct_enabled && !ct->ct_internal)
+      ctlist[count++] = ct;
+
+  assert(count <= channel_tags_count);
+  qsort(ctlist, count, sizeof(channel_tag_t *), channel_tag_sort_fcn(sort_type));
+
+  *_count = count;
+  return ctlist;
+}
+/**
+ *
+ */
 static void channel_tags_memoryinfo_update(memoryinfo_t *my)
 {
   channel_tag_t *ct;
@@ -1706,6 +1949,7 @@ channel_tag_init ( void )
   htsmsg_field_t *f;
 
   memoryinfo_register(&channel_tags_memoryinfo);
+  channel_tags_count = 0;
   TAILQ_INIT(&channel_tags);
   if ((c = hts_settings_load("channel/tag")) != NULL) {
     HTSMSG_FOREACH(f, c) {

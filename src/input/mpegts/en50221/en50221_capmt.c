@@ -16,7 +16,9 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "tvheadend.h"
 #include "en50221_capmt.h"
+#include "esstream.h"
 #include "input.h"
 
 #define EN50221_CAPMT_CMD_OK       1
@@ -77,18 +79,26 @@ static int en50221_capmt_check_pid
 {
   elementary_stream_t *st;
 
-  TAILQ_FOREACH(st, &s->s_filt_components, es_link)
+  TAILQ_FOREACH(st, &s->s_components.set_filter, es_filter_link)
     if (st->es_pid == pid) return 1;
   return 0;
 }
 
 static int en50221_capmt_check_caid
-  (mpegts_service_t *s, uint16_t pid, uint16_t caid)
+  (mpegts_service_t *s, uint16_t pid, uint16_t caid,
+   const uint16_t *caids, int caids_count)
 {
   elementary_stream_t *st;
   caid_t *c;
 
-  TAILQ_FOREACH(st, &s->s_filt_components, es_link) {
+  for (; caids_count > 0; caids++, caids_count--)
+    if (caid == *caids)
+      break;
+
+  if (caids_count == 0)
+    return 0;
+
+  TAILQ_FOREACH(st, &s->s_components.set_filter, es_filter_link) {
     if (st->es_type != SCT_CA) continue;
     LIST_FOREACH(c, &st->es_caids, link) {
       if (!c->use) continue;
@@ -104,6 +114,7 @@ static int en50221_capmt_check_caid
 
 int en50221_capmt_build
   (mpegts_service_t *s, int bcmd, uint16_t svcid,
+   const uint16_t *caids, int caids_count,
    const uint8_t *pmt, size_t pmtlen,
    uint8_t **capmt, size_t *capmtlen)
 {
@@ -149,7 +160,7 @@ int en50221_capmt_build
     if (dtag == DVB_DESC_CA && dlen >= 4) {
       caid = extract_2byte(p + 2);
       pid  = extract_pid(p + 4);
-      if (en50221_capmt_check_caid(s, pid, caid)) {
+      if (en50221_capmt_check_caid(s, pid, caid, caids, caids_count)) {
         if (first) {
           *x++ = cmd_id;
           first = 0;
@@ -174,7 +185,7 @@ int en50221_capmt_build
     p  += 5;
     tl -= 5;
     if (en50221_capmt_check_pid(s, pid)) {
-      memcpy(y = x, p, 3); /* stream type, PID */
+      memcpy(y = x, p - 5, 3); /* stream type, PID */
       x += 5;
       first = 1;
       while (l > 1) {
@@ -183,7 +194,7 @@ int en50221_capmt_build
         if (dtag == DVB_DESC_CA && dlen >= 4) {
           caid = extract_2byte(p + 2);
           pid  = extract_pid(p + 4);
-          if (en50221_capmt_check_caid(s, pid, caid)) {
+          if (en50221_capmt_check_caid(s, pid, caid, caids, caids_count)) {
             if (first) {
               *x++ = cmd_id;
               first = 0;
@@ -197,7 +208,7 @@ int en50221_capmt_build
         tl -= 2 + dlen;
       }
       if (l)
-        return -EINVAL;
+        goto reterr;
       y[3] = 0xf0;
       put_len12(y + 3, x - y - 5);
     } else {
@@ -206,9 +217,11 @@ int en50221_capmt_build
     }
   }
 
-  *capmt = d;
-  *capmtlen = x - d;
-  return 0;
+  if (tl == 0) {
+    *capmt = d;
+    *capmtlen = x - d;
+    return 0;
+  }
 
 reterr:
   free(d);
@@ -249,7 +262,7 @@ int en50221_capmt_build_query
   while (tl >= 5) {
     l = extract_len12(n + 3);
     if (l + 5 > tl)
-      return -EINVAL;
+      goto reterr;
     if (l > 0) {
       if (l < 7)
         goto reterr;
@@ -259,11 +272,12 @@ int en50221_capmt_build_query
     n  += 5 + l;
     tl -= 5 + l;
   }
-  if (tl)
-    return -EINVAL;
-  *dst = d;
-  *dstlen = capmtlen;
-  return 0;
+
+  if (tl == 0) {
+    *dst = d;
+    *dstlen = capmtlen;
+    return 0;
+  }
 
 reterr:
   free(d);
@@ -311,7 +325,7 @@ void en50221_capmt_dump
         caid = extract_2byte(p + 2);
         pid  = extract_pid(p + 4);
         tvhtrace(subsys, "%s:   CAPMT CA descriptor caid %04X pid %04x length %d (%s)",
-                         prefix, caid, pid, dlen, bin2hex(hbuf, sizeof(hbuf), p + 6, l - 4));
+                         prefix, caid, pid, dlen, bin2hex(hbuf, sizeof(hbuf), p + 6, dlen - 4));
       }
       p += dlen + 2;
       l -= dlen + 2;
@@ -342,7 +356,7 @@ void en50221_capmt_dump
           caid = extract_2byte(p + 2);
           pid  = extract_pid(p + 4);
           tvhtrace(subsys, "%s:     CAPMT ES CA descriptor caid %04X pid %04x length %d (%s)",
-                           prefix, caid, pid, dlen, bin2hex(hbuf, sizeof(hbuf), p + 6, l - 4));
+                           prefix, caid, pid, dlen, bin2hex(hbuf, sizeof(hbuf), p + 6, dlen - 4));
         }
         p += dlen + 2;
         l -= dlen + 2;

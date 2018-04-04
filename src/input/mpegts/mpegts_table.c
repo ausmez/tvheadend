@@ -47,7 +47,6 @@ mpegts_table_consistency_check ( mpegts_mux_t *mm )
 static void
 mpegts_table_fastswitch ( mpegts_mux_t *mm, mpegts_table_t *mtm )
 {
-  char buf[256];
   mpegts_table_t   *mt;
 
   assert(mm == mtm->mt_mux);
@@ -76,8 +75,7 @@ mpegts_table_fastswitch ( mpegts_mux_t *mm, mpegts_table_t *mtm )
 
   pthread_mutex_unlock(&mm->mm_tables_lock);
 
-  mpegts_mux_nice_name(mm, buf, sizeof(buf));
-  mpegts_mux_scan_done(mm, buf, 1);
+  mpegts_mux_scan_done(mm, mm->mm_nicename, 1);
 }
 
 void
@@ -174,6 +172,29 @@ mpegts_table_type ( mpegts_table_t *mt )
   if ((type & (MPS_FTABLE | MPS_TABLE)) == 0) type |= MPS_TABLE;
   return type;
 }
+
+/**
+ * Find a table
+ */
+mpegts_table_t *mpegts_table_find
+  ( mpegts_mux_t *mm, const char *name, void *opaque )
+{
+  mpegts_table_t *mt;
+
+  pthread_mutex_lock(&mm->mm_tables_lock);
+  mpegts_table_consistency_check(mm);
+  LIST_FOREACH(mt, &mm->mm_tables, mt_link) {
+    if (mt->mt_opaque != opaque)
+      continue;
+    if (strcmp(mt->mt_name, name))
+      continue;
+    mpegts_table_consistency_check(mm);
+    break;
+  }
+  pthread_mutex_unlock(&mm->mm_tables_lock);
+  return mt;
+}
+
 
 /**
  * Add a new DVB table

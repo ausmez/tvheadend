@@ -35,12 +35,10 @@
 #define DVBCAM_SEL_FIRST    1
 #define DVBCAM_SEL_LAST     2
 
-#define CAIDS_PER_CA_SLOT   16
-
 typedef struct dvbcam_active_cam {
   TAILQ_ENTRY(dvbcam_active_cam) global_link;
-  uint16_t              caids[CAIDS_PER_CA_SLOT];
-  int                   num_caids;
+  uint16_t              caids[32];
+  int                   caids_count;
   linuxdvb_ca_t        *ca;
   uint8_t               slot;
   int                   active_programs;
@@ -68,14 +66,15 @@ typedef struct dvbcam {
   caclient_t;
   LIST_HEAD(,dvbcam_active_service) services;
   int limit;
+  int multi;
   int caid_select;
   uint16_t caid_list[32];
 } dvbcam_t;
 
-TAILQ_HEAD(,dvbcam_active_service) dvbcam_active_services;
-TAILQ_HEAD(,dvbcam_active_cam) dvbcam_active_cams;
+static TAILQ_HEAD(,dvbcam_active_service) dvbcam_active_services;
+static TAILQ_HEAD(,dvbcam_active_cam) dvbcam_active_cams;
 
-pthread_mutex_t dvbcam_mutex;
+static pthread_mutex_t dvbcam_mutex;
 
 /*
  *
@@ -85,9 +84,11 @@ dvbcam_status_update0(caclient_t *cac)
 {
   int status = CACLIENT_STATUS_NONE;
 
+  pthread_mutex_lock(&dvbcam_mutex);
   if (TAILQ_FIRST(&dvbcam_active_cams))
     status = CACLIENT_STATUS_CONNECTED;
   caclient_set_status(cac, status);
+  pthread_mutex_unlock(&dvbcam_mutex);
 }
 
 /*
@@ -137,7 +138,7 @@ dvbcam_unregister_ddci(dvbcam_active_cam_t *ac, dvbcam_active_service_t *as)
 
     /* unassign the service from the DD CI CAM */
     as->lddci = NULL;
-    linuxdvb_ddci_assign(lddci, NULL);
+    linuxdvb_ddci_unassign(lddci, t);
     if (dr) {
       dr->dr_descrambler = NULL;
       dr->dr_descramble = NULL;
@@ -165,12 +166,12 @@ dvbcam_is_ddci(struct service *t)
  */
 void
 dvbcam_register_cam(linuxdvb_ca_t * lca, uint16_t * caids,
-                    int num_caids)
+                    int caids_count)
 {
   dvbcam_active_cam_t *ac, *ac_first;
-  int registered = 0;
+  int registered = 0, call_update = 0;
 
-  tvhtrace(LS_DVBCAM, "register cam %p num_caids %u", lca->lca_name, num_caids);
+  tvhtrace(LS_DVBCAM, "register cam %p caids_count %u", lca->lca_name, caids_count);
 
   pthread_mutex_lock(&dvbcam_mutex);
 
@@ -182,23 +183,27 @@ dvbcam_register_cam(linuxdvb_ca_t * lca, uint16_t * caids,
   }
   if (ac == NULL) {
     if ((ac = calloc(1, sizeof(*ac))) == NULL)
-      return;
+      goto reterr;
     ac->ca = lca;
   }
 
-  num_caids = MIN(CAIDS_PER_CA_SLOT, num_caids);
+  caids_count = MIN(ARRAY_SIZE(ac->caids), caids_count);
 
-  memcpy(ac->caids, caids, num_caids * sizeof(uint16_t));
-  ac->num_caids = num_caids;
+  memcpy(ac->caids, caids, caids_count * sizeof(uint16_t));
+  ac->caids_count = caids_count;
 
   ac_first = TAILQ_FIRST(&dvbcam_active_cams);
   if (!registered)
     TAILQ_INSERT_TAIL(&dvbcam_active_cams, ac, global_link);
 
-  if (ac_first == NULL)
+  call_update = ac_first == NULL;
+
+reterr:
+  pthread_mutex_unlock(&dvbcam_mutex);
+
+  if (call_update)
     dvbcam_status_update();
 
-  pthread_mutex_unlock(&dvbcam_mutex);
 }
 
 /*
@@ -209,6 +214,7 @@ dvbcam_unregister_cam(linuxdvb_ca_t *lca)
 {
   dvbcam_active_cam_t *ac, *ac_next;
   dvbcam_active_service_t *as;
+  int call_update;
 
   tvhtrace(LS_DVBCAM, "unregister cam %s", lca->lca_name);
 
@@ -231,10 +237,12 @@ dvbcam_unregister_cam(linuxdvb_ca_t *lca)
     }
   }
 
-  if (TAILQ_EMPTY(&dvbcam_active_cams))
-    dvbcam_status_update();
+  call_update = TAILQ_EMPTY(&dvbcam_active_cams);
 
   pthread_mutex_unlock(&dvbcam_mutex);
+
+  if (call_update)
+    dvbcam_status_update();
 }
 
 /*
@@ -261,7 +269,7 @@ dvbcam_ca_lookup(dvbcam_active_cam_t *ac, mpegts_input_t *input, uint16_t caid)
   if (lfe == NULL || lcat->lcat_adapter != lfe->lfe_adapter)
     return 0;
 
-  for (i = 0; i < ac->num_caids; i++)
+  for (i = 0; i < ac->caids_count; i++)
     if (ac->caids[i] == caid)
       return 1;
 
@@ -324,7 +332,8 @@ dvbcam_pmt_data(mpegts_service_t *s, const uint8_t *ptr, int len)
   }
 
   r = en50221_capmt_build(s, bcmd,
-                          s->s_dvb_service_id,
+                          service_id16(s),
+                          ac->caids, ac->caids_count,
                           as->last_pmt, as->last_pmt_len,
                           &capmt, &capmt_len);
   if (r >= 0) {
@@ -354,7 +363,8 @@ dvbcam_service_destroy(th_descrambler_t *td)
     if (ac) {
       s = (mpegts_service_t *)td->td_service;
       r = en50221_capmt_build(s, EN50221_CAPMT_BUILD_DELETE,
-                              s->s_dvb_service_id,
+                              service_id16(s),
+                              ac->caids, ac->caids_count,
                               as->last_pmt, as->last_pmt_len,
                               &capmt, &capmt_len);
       if (r >= 0) {
@@ -399,7 +409,7 @@ dvbcam_descramble_ddci(service_t *t, elementary_stream_t *st, const uint8_t *tsb
   dvbcam_active_service_t   *as = (dvbcam_active_service_t *)dr->dr_descrambler;
 
   if (as->ac != NULL)
-    linuxdvb_ddci_put(as->ac->ca->lca_transport->lddci, tsb, len);
+    linuxdvb_ddci_put(as->ac->ca->lca_transport->lddci, t, tsb, len);
 
   return 1;
 }
@@ -475,7 +485,7 @@ dvbcam_service_start(caclient_t *cac, service_t *t)
       if (i > 0)
         break;
     }
-    TAILQ_FOREACH(st, &t->s_filt_components, es_link) {
+    TAILQ_FOREACH(st, &t->s_components.set_all, es_link) {
       if (st->es_type != SCT_CA) continue;
       LIST_FOREACH(c, &st->es_caids, link) {
         if (!c->use) continue;
@@ -488,12 +498,12 @@ dvbcam_service_start(caclient_t *cac, service_t *t)
             /* limit the concurrent service decoders per CAM */
             if (dc->limit > 0 && ac->allocated_programs >= dc->limit)
               continue;
-  #if ENABLE_DDCI
-            /* currently we allow only one service per DD CI */
+#if ENABLE_DDCI
             lcat = ac->ca->lca_transport;
-            if (lcat->lddci && linuxdvb_ddci_is_assigned(lcat->lddci))
+            if (lcat->lddci && linuxdvb_ddci_do_not_assign(lcat->lddci, t,
+                                                           dc->multi))
               continue;
-  #endif
+#endif
             tvhtrace(LS_DVBCAM, "%s/%p: match CAID %04X PID %d (%04X)",
                                 ac->ca->lca_name, t, c->caid, c->pid, c->pid);
             goto end_of_search_for_cam;
@@ -529,7 +539,7 @@ end_of_search_for_cam:
         if (i > 0)
           break;
       }
-      TAILQ_FOREACH(st, &t->s_filt_components, es_link) {
+      TAILQ_FOREACH(st, &t->s_components.set_filter, es_link) {
         if (st->es_type != SCT_CA) continue;
         LIST_FOREACH(c, &st->es_caids, link) {
           if (i >= ARRAY_SIZE(as->caid_list)) {
@@ -590,7 +600,7 @@ end_of_search_for_cam:
 update_pid:
 #if ENABLE_DDCI
   /* open selected ECM PIDs */
-  TAILQ_FOREACH(st, &t->s_filt_components, es_link) {
+  TAILQ_FOREACH(st, &t->s_components.set_all, es_link) {
     if (st->es_type != SCT_CA) continue;
     LIST_FOREACH(c, &st->es_caids, link) {
       if (!c->use) continue;
@@ -615,14 +625,14 @@ update_pid:
     if (mi) {
       pthread_mutex_lock(&mi->mi_output_lock);
       pthread_mutex_lock(&t->s_stream_mutex);
-      mpegts_input_open_pid(mi, mm, DVB_CAT_PID, MPS_SERVICE, MPS_WEIGHT_CAT, t, 0);
+      mpegts_input_open_pid(mi, mm, DVB_CAT_PID, MPS_SERVICE | MPS_NOPOSTDEMUX,
+                            MPS_WEIGHT_CAT, t, 0);
       ((mpegts_service_t *)t)->s_cat_opened = 1;
       for (i = 0; i < ecm_to_open.count; i++)
         mpegts_input_open_pid(mi, mm, ecm_to_open.pids[i].pid, MPS_SERVICE,
                              MPS_WEIGHT_CA, t, 0);
       for (i = 0; i < ecm_to_close.count; i++)
-        mpegts_input_close_pid(mi, mm, ecm_to_close.pids[i].pid, MPS_SERVICE,
-                               MPS_WEIGHT_CA, t);
+        mpegts_input_close_pid(mi, mm, ecm_to_close.pids[i].pid, MPS_SERVICE, t);
       pthread_mutex_unlock(&t->s_stream_mutex);
       pthread_mutex_unlock(&mi->mi_output_lock);
       mpegts_mux_update_pids(mm);
@@ -728,19 +738,19 @@ dvbcam_cat_update(caclient_t *cac, mpegts_mux_t *mux, const uint8_t *data, int l
     mi = mux->mm_active ? mux->mm_active->mmi_input : NULL;
     if (mi) {
       pthread_mutex_lock(&mi->mi_output_lock);
-      pthread_mutex_lock(&sp->service->s_stream_mutex);
       for (i = 0; i < services_count; i++) {
         sp = &services[i];
+        pthread_mutex_lock(&sp->service->s_stream_mutex);
         for (i = 0; i < sp->to_open.count; i++)
           mpegts_input_open_pid(mi, mux, sp->to_open.pids[i].pid, MPS_SERVICE,
                                MPS_WEIGHT_CAT, sp->service, 0);
         for (i = 0; i < sp->to_close.count; i++)
           mpegts_input_close_pid(mi, mux, sp->to_close.pids[i].pid, MPS_SERVICE,
-                                 MPS_WEIGHT_CAT, sp->service);
+                                 sp->service);
+        pthread_mutex_unlock(&sp->service->s_stream_mutex);
         mpegts_pid_done(&sp->to_open);
         mpegts_pid_done(&sp->to_close);
       }
-      pthread_mutex_unlock(&sp->service->s_stream_mutex);
       pthread_mutex_unlock(&mi->mi_output_lock);
       mpegts_mux_update_pids(mux);
     }
@@ -832,6 +842,17 @@ const idclass_t caclient_dvbcam_class =
   .ic_super      = &caclient_class,
   .ic_class      = "caclient_dvbcam",
   .ic_caption    = N_("Linux DVB CAM Client"),
+  .ic_groups     = (const property_group_t[]) {
+    {
+      .name   = N_("General Settings"),
+      .number = 1,
+    },
+    {
+      .name   = N_("Common Interface Settings"),
+      .number = 2,
+    },
+    {}
+  },
   .ic_properties = (const property_t[]){
     {
       .type     = PT_INT,
@@ -839,15 +860,17 @@ const idclass_t caclient_dvbcam_class =
       .name     = N_("Service limit"),
       .desc     = N_("Limit of concurrent descrambled services (per one CAM)."),
       .off      = offsetof(dvbcam_t, limit),
+      .group    = 2,
     },
     {
       .type     = PT_INT,
       .id       = "caid_select",
       .name     = N_("CAID selection"),
-      .desc     = N_("Selection method for CAID"),
+      .desc     = N_("Selection method for CAID."),
       .list     = caclient_dvbcam_class_caid_selection_list,
       .off      = offsetof(dvbcam_t, caid_select),
       .opts     = PO_DOC_NLIST,
+      .group    = 2,
     },
     {
       .type     = PT_STR,
@@ -857,6 +880,15 @@ const idclass_t caclient_dvbcam_class =
                      "E.g. '0D00,0F00,0100'."),
       .set      = caclient_dvbcam_class_caid_list_set,
       .get      = caclient_dvbcam_class_caid_list_get,
+      .group    = 2,
+    },
+    {
+      .type     = PT_BOOL,
+      .id       = "multi",
+      .name     = N_("CAM can decode multiple channels"),
+      .desc     = N_("To enable MCD and MTD for this CAM."),
+      .off      = offsetof(dvbcam_t, multi),
+      .group    = 2,
     },
     {}
   }

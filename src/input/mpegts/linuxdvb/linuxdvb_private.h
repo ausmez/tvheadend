@@ -433,7 +433,7 @@ int linuxdvb2tvh_delsys ( int delsys );
 #if ENABLE_LINUXDVB_CA
 
 linuxdvb_transport_t *
-linuxdvb_transport_create( linuxdvb_adapter_t *la, int number,
+linuxdvb_transport_create( linuxdvb_adapter_t *la, int number, int slots,
                            const char *ca_path, const char *ci_path );
 void linuxdvb_transport_destroy( linuxdvb_transport_t *lcat );
 void linuxdvb_transport_save( linuxdvb_transport_t *lcat, htsmsg_t *m );
@@ -460,28 +460,15 @@ linuxdvb_ddci_open ( linuxdvb_ddci_t *lddci );
 void
 linuxdvb_ddci_close ( linuxdvb_ddci_t *lddci );
 void
-linuxdvb_ddci_put ( linuxdvb_ddci_t *lddci, const uint8_t *tsb, int len );
-/* Un/Assign the service to DD CI CAM.
- * If t is NULL, the service is unassigned.
- *
- *  ret: 0 .. un/assigned
- *       1 .. assigned, but it was already assigned to another service
- */
-int
+linuxdvb_ddci_put ( linuxdvb_ddci_t *lddci, service_t *t,
+                    const uint8_t *tsb, int len );
+void
 linuxdvb_ddci_assign ( linuxdvb_ddci_t *lddci, service_t *t );
+void
+linuxdvb_ddci_unassign ( linuxdvb_ddci_t *lddci, service_t *t );
+/* return 0, if ddci can be assigned to the given service */
 int
-linuxdvb_ddci_is_assigned ( linuxdvb_ddci_t *lddci );
-/* Checks if the given PID needs to be sent to the CAM (descrambler).
- * This will check for special PIDs only. Scrambled packets (scrambled bits set)
- * data needs to be forwarded in any case to the CAM.
- *
- *  ret:  0 .. not required
- *       >0 .. PID is required by the CAM
- */
-int
-linuxdvb_ddci_require_descramble
-  ( service_t *t, int_fast16_t pid, elementary_stream_t *st );
-
+linuxdvb_ddci_do_not_assign ( linuxdvb_ddci_t *lddci, service_t *t, int multi );
 #endif
 
 /*
@@ -525,7 +512,7 @@ htsmsg_t *linuxdvb_en50607_id_list  ( void *o, const char *lang );
 htsmsg_t *linuxdvb_en50494_pin_list ( void *o, const char *lang );
 
 static inline int linuxdvb_unicable_is_en50607( const char *str )
-  { return strcmp(str, UNICABLE_II_NAME) == 0; }
+  { return str && strcmp(str, UNICABLE_II_NAME) == 0; }
 static inline int linuxdvb_unicable_is_en50494( const char *str )
   { return !linuxdvb_unicable_is_en50607(str); }
 

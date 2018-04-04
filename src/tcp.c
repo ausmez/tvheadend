@@ -735,7 +735,7 @@ tcp_server_loop(void *aux)
   while(atomic_get(&tcp_server_running)) {
     r = tvhpoll_wait(tcp_server_poll, &ev, 1, -1);
     if(r < 0) {
-      if (ERRNO_AGAIN(-r))
+      if (ERRNO_AGAIN(errno))
         continue;
       tvherror(LS_TCP, "tcp_server_loop: tvhpoll_wait: %s", strerror(errno));
       continue;
@@ -743,7 +743,7 @@ tcp_server_loop(void *aux)
 
     if (r == 0) continue;
 
-    if (ev.data.ptr == &tcp_server_pipe) {
+    if (ev.ptr == &tcp_server_pipe) {
       r = read(tcp_server_pipe.rd, &c, 1);
       if (r > 0) {
 next:
@@ -764,7 +764,7 @@ next:
       continue;
     }
 
-    ts = ev.data.ptr;
+    ts = ev.ptr;
 
     if(ev.events & TVHPOLL_HUP) {
       close(ts->serverfd);
@@ -1112,7 +1112,7 @@ tcp_server_connections ( void )
   tcp_server_launch_t *tsl;
   lock_assert(&global_lock);
   htsmsg_t *l, *e, *m;
-  char buf[1024];
+  char buf[128];
   int c = 0;
   
   /* Build list */

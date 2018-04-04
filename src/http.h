@@ -88,6 +88,10 @@ typedef struct http_arg {
 #define HTTP_STATUS_HTTP_VERSION    505
 #define HTTP_STATUS_OP_NOT_SUPPRT   551
 
+#define HTTP_AUTH_PLAIN             0
+#define HTTP_AUTH_DIGEST            1
+#define HTTP_AUTH_PLAIN_DIGEST      2
+
 typedef enum http_state {
   HTTP_CON_WAIT_REQUEST,
   HTTP_CON_READ_HEADER,
@@ -131,11 +135,13 @@ typedef enum http_wsop {
 } http_wsop_t;
 
 typedef struct http_connection {
+  int hc_subsys;
   int hc_fd;
   struct sockaddr_storage *hc_peer;
   char *hc_peer_ipstr;
   struct sockaddr_storage *hc_self;
   char *hc_representative;
+  struct sockaddr_storage *hc_proxy_ip;
   struct sockaddr_storage *hc_local_ip;
 
   pthread_mutex_t  *hc_paths_mutex;
@@ -425,7 +431,7 @@ struct http_client {
   void    (*hc_conn_closed)  (http_client_t *hc, int err);
 };
 
-void http_client_init ( const char *user_agent );
+void http_client_init ( void );
 void http_client_done ( void );
 
 http_client_t*

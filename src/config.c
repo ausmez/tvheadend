@@ -31,6 +31,7 @@
 #include "profile.h"
 #include "avahi.h"
 #include "url.h"
+#include "http.h"
 #include "satip/server.h"
 #include "channels.h"
 #include "input/mpegts/scanfile.h"
@@ -1334,7 +1335,7 @@ config_migrate_v21 ( void )
         s64 = 0;
         htsmsg_field_get_s64(f, &s64);
         if ((s64 || !strcmp(str ?: "", f->hmf_name)) &&
-            f->hmf_name && f->hmf_name[0]) {
+            f->hmf_name[0]) {
           a = htsmsg_create_map();
           htsmsg_add_bool(a, "enabled", 1);
           htsmsg_add_msg(e, f->hmf_name, a);
@@ -1468,8 +1469,11 @@ dobackup(const char *oldver)
   char outfile[PATH_MAX], cwd[PATH_MAX];
   const char *argv[] = {
     "/usr/bin/tar", "cjf", outfile,
-    "--exclude", "backup", "--exclude", "epggrab/*.sock",
+    "--exclude", "backup",
+    "--exclude", "epggrab/*.sock",
     "--exclude", "timeshift/buffer",
+    "--exclude", "imagecache/meta",
+    "--exclude", "imagecache/data",
     ".", NULL
   };
   const char *root = hts_settings_get_root();
@@ -1533,7 +1537,7 @@ dobackup(const char *oldver)
     s = htsbuf_to_string(&q);
     tvherror(LS_CONFIG, "command '%s' returned error code %d", s, code);
     tvherror(LS_CONFIG, "executed in directory '%s'", root);
-    tvherror(LS_CONFIG, "please, do not report this as an error, you may use --nobackup option");
+    tvherror(LS_CONFIG, "please DON'T report this as an error, you may use --nobackup to skip");
     tvherror(LS_CONFIG, "... or run the above command in the printed directory");
     tvherror(LS_CONFIG, "... using the same user/group as for the tvheadend executable");
     tvherror(LS_CONFIG, "... to check the reason for the unfinished backup");
@@ -1674,7 +1678,8 @@ config_check ( void )
 static int config_newcfg = 0;
 
 void
-config_boot ( const char *path, gid_t gid, uid_t uid )
+config_boot
+  ( const char *path, gid_t gid, uid_t uid, const char *http_user_agent )
 {
   struct stat st;
   char buf[1024];
@@ -1685,7 +1690,7 @@ config_boot ( const char *path, gid_t gid, uid_t uid )
   memset(&config, 0, sizeof(config));
   config.idnode.in_class = &config_class;
   config.ui_quicktips = 1;
-  config.digest = 1;
+  config.http_auth = HTTP_AUTH_DIGEST;
   config.proxy = 0;
   config.realm = strdup("tvheadend");
   config.info_area = strdup("login,storage,time");
@@ -1697,6 +1702,8 @@ config_boot ( const char *path, gid_t gid, uid_t uid )
   config.epg_update_window = 24*3600;
   config_scanfile_ok = 0;
   config.theme_ui = strdup("blue");
+  config.chname_num = 1;
+  config.iptv_tpool_count = 2;
 
   idclass_register(&config_class);
 
@@ -1775,6 +1782,12 @@ config_boot ( const char *path, gid_t gid, uid_t uid )
     config.realm = strdup("tvheadend");
   if (tvh_str_default(config.http_server_name, NULL) == NULL)
     config.http_server_name = strdup("HTS/tvheadend");
+  if ((config.http_user_agent &&
+       strncmp(config.http_user_agent, "TVHeadend/", 10) == 0) ||
+      tvh_str_default(config.http_user_agent, NULL) == NULL) {
+    snprintf(buf, sizeof(buf), "TVHeadend/%s", tvheadend_version);
+    tvh_str_set(&config.http_user_agent, buf);
+  }
   if (!config_scanfile_ok)
     config_muxconfpath_notify(&config.idnode, NULL);
 }
@@ -1815,6 +1828,7 @@ void config_done ( void )
   free(config.wizard);
   free(config.full_version);
   free(config.http_server_name);
+  free(config.http_user_agent);
   free(config.server_name);
   free(config.language);
   free(config.language_ui);
@@ -2008,6 +2022,17 @@ config_class_piconscheme_list ( void *o, const char *lang )
   return strtab2htsmsg(tab, 1, lang);
 }
 
+static htsmsg_t *
+config_class_http_auth_list ( void *o, const char *lang )
+{
+  static const struct strtab tab[] = {
+    { N_("Plain (insecure)"),      HTTP_AUTH_PLAIN },
+    { N_("Digest"),                HTTP_AUTH_DIGEST },
+    { N_("Both plain and digest"), HTTP_AUTH_PLAIN_DIGEST },
+  };
+  return strtab2htsmsg(tab, 1, lang);
+}
+
 #if ENABLE_MPEGTS_DVB
 static void
 config_muxconfpath_notify_cb(void *opaque, int disarmed)
@@ -2052,32 +2077,28 @@ const idclass_t config_class = {
   .ic_save       = config_class_save,
   .ic_groups     = (const property_group_t[]) {
       {
-         .name   = N_("Server settings"),
+         .name   = N_("Server Settings"),
          .number = 1,
       },
       {
-         .name   = N_("Web interface settings"),
+         .name   = N_("Web Interface Settings"),
          .number = 2,
       },
       {
-         .name   = N_("EPG settings"),
+         .name   = N_("EPG Settings"),
          .number = 3,
       },
       {
-         .name   = N_("Channel icon/Picon settings"),
+         .name   = N_("Channel icon/Picon Settings"),
          .number = 4,
       },
       {
-         .name   = N_("HTTP server settings"),
+         .name   = N_("HTTP Server Settings"),
          .number = 5,
       },
       {
-         .name   = N_("System time update"),
+         .name   = N_("Miscellaneous Settings"),
          .number = 6,
-      },
-      {
-         .name   = N_("Misc settings"),
-         .number = 7,
       },
       {}
   },
@@ -2186,6 +2207,23 @@ const idclass_t config_class = {
       .get    = config_class_info_area_get,
       .list   = config_class_info_area_list,
       .opts   = PO_LORDER | PO_ADVANCED | PO_DOC_NLIST,
+      .group  = 2
+    },
+    {
+      .type   = PT_BOOL,
+      .id     = "chname_num",
+      .name   = N_("Channel name with numbers"),
+      .desc   = N_("Add channel numbers to the channel name list"),
+      .off    = offsetof(config_t, chname_num),
+      .group  = 2,
+      .def.i  = 1
+    },
+    {
+      .type   = PT_BOOL,
+      .id     = "chname_src",
+      .name   = N_("Channel name with sources"),
+      .desc   = N_("Add sources (like DVB-T string) to the channel name list"),
+      .off    = offsetof(config_t, chname_src),
       .group  = 2
     },
     {
@@ -2313,13 +2351,14 @@ const idclass_t config_class = {
       .group  = 5
     },
     {
-      .type   = PT_BOOL,
+      .type   = PT_INT,
       .id     = "digest",
-      .name   = N_("Digest authentication"),
+      .name   = N_("Authentication type"),
       .desc   = N_("Digest access authentication is intended as a security trade-off. "
                    "It is intended to replace unencrypted HTTP basic access authentication. "
                    "This option should be enabled for standard usage."),
-      .off    = offsetof(config_t, digest),
+      .list   = config_class_http_auth_list,
+      .off    = offsetof(config_t, http_auth),
       .opts   = PO_EXPERT,
       .group  = 5
     },
@@ -2362,6 +2401,83 @@ const idclass_t config_class = {
       .group  = 5
     },
     {
+      .type   = PT_STR,
+      .id     = "http_user_agent",
+      .name   = N_("HTTP User Agent"),
+      .desc   = N_("The user agent string for the build-in HTTP client."),
+      .off    = offsetof(config_t, http_user_agent),
+      .opts   = PO_HIDDEN | PO_EXPERT,
+      .group  = 6,
+    },
+    {
+      .type   = PT_INT,
+      .id     = "iptv_tpool",
+      .name   = N_("IPTV threads"),
+      .desc   = N_("Set the number of threads for IPTV to split load "
+                   "across more CPUs."),
+      .off    = offsetof(config_t, iptv_tpool_count),
+      .group  = 6,
+    },
+    {
+      .type   = PT_INT,
+      .id     = "dscp",
+      .name   = N_("DSCP/TOS for streaming"),
+      .desc   = N_("Differentiated Services Code Point / Type of "
+                   "Service: Set the service class Tvheadend sends "
+                   "with each packet. Depending on the option selected "
+                   "this tells your router the prority in which to "
+                   "give packets sent from Tvheadend, this option does "
+                   "not usually need changing. See "
+                   "https://en.wikipedia.org/wiki/"
+                   "Differentiated_services for more information. "),
+      .off    = offsetof(config_t, dscp),
+      .list   = config_class_dscp_list,
+      .opts   = PO_EXPERT | PO_DOC_NLIST,
+      .group  = 6,
+    },
+    {
+      .type   = PT_U32,
+      .id     = "descrambler_buffer",
+      .name   = N_("Descrambler buffer (TS packets)"),
+      .desc   = N_("The number of MPEG-TS packets Tvheadend buffers in case "
+                   "there is a delay receiving CA keys. "),
+      .off    = offsetof(config_t, descrambler_buffer),
+      .opts   = PO_EXPERT,
+      .group  = 6,
+    },
+    {
+      .type   = PT_BOOL,
+      .id     = "parser_backlog",
+      .name   = N_("Packet backlog"),
+      .desc   = N_("Send previous stream frames to upper layers "
+                   "(before frame start is signalled in the stream). "
+                   "It may cause issues with some clients / players."),
+      .off    = offsetof(config_t, parser_backlog),
+      .opts   = PO_EXPERT,
+      .group  = 6,
+    },
+    {
+      .type   = PT_STR,
+      .id     = "muxconfpath",
+      .name   = N_("DVB scan files path"),
+      .desc   = N_("Select the path to use for DVB scan configuration "
+                   "files. Typically dvb-apps stores these in "
+                   "/usr/share/dvb/. Leave blank to use the "
+                   "internal file set."),
+      .off    = offsetof(config_t, muxconf_path),
+      .notify = config_muxconfpath_notify,
+      .opts   = PO_ADVANCED,
+      .group  = 6,
+    },
+    {
+      .type   = PT_BOOL,
+      .id     = "hbbtv",
+      .name   = N_("Parse HbbTV info"),
+      .desc   = N_("Parse HbbTV information from services."),
+      .off    = offsetof(config_t, hbbtv),
+      .group  = 6,
+    },
+    {
       .type   = PT_BOOL,
       .id     = "tvhtime_update_enabled",
       .name   = N_("Update time"),
@@ -2395,65 +2511,6 @@ const idclass_t config_class = {
       .off    = offsetof(config_t, tvhtime_tolerance),
       .opts   = PO_EXPERT,
       .group  = 6,
-    },
-    {
-      .type   = PT_INT,
-      .id     = "dscp",
-      .name   = N_("DSCP/TOS for streaming"),
-      .desc   = N_("Differentiated Services Code Point / Type of "
-                   "Service: Set the service class Tvheadend sends "
-                   "with each packet. Depending on the option selected "
-                   "this tells your router the prority in which to "
-                   "give packets sent from Tvheadend, this option does "
-                   "not usually need changing. See "
-                   "https://en.wikipedia.org/wiki/"
-                   "Differentiated_services for more information. "),
-      .off    = offsetof(config_t, dscp),
-      .list   = config_class_dscp_list,
-      .opts   = PO_EXPERT | PO_DOC_NLIST,
-      .group  = 7
-    },
-    {
-      .type   = PT_U32,
-      .id     = "descrambler_buffer",
-      .name   = N_("Descrambler buffer (TS packets)"),
-      .desc   = N_("The number of MPEG-TS packets Tvheadend buffers in case "
-                   "there is a delay receiving CA keys. "),
-      .off    = offsetof(config_t, descrambler_buffer),
-      .opts   = PO_EXPERT,
-      .group  = 7
-    },
-    {
-      .type   = PT_BOOL,
-      .id     = "parser_backlog",
-      .name   = N_("Packet backlog"),
-      .desc   = N_("Send previous stream frames to upper layers "
-                   "(before frame start is signalled in the stream). "
-                   "It may cause issues with some clients / players."),
-      .off    = offsetof(config_t, parser_backlog),
-      .opts   = PO_EXPERT,
-      .group  = 7
-    },
-    {
-      .type   = PT_STR,
-      .id     = "muxconfpath",
-      .name   = N_("DVB scan files path"),
-      .desc   = N_("Select the path to use for DVB scan configuration "
-                   "files. Typically dvb-apps stores these in "
-                   "/usr/share/dvb/. Leave blank to use the "
-                   "internal file set."),
-      .off    = offsetof(config_t, muxconf_path),
-      .notify = config_muxconfpath_notify,
-      .opts   = PO_ADVANCED,
-      .group  = 7
-    },
-    {
-      .type   = PT_BOOL,
-      .id     = "hbbtv",
-      .name   = N_("Parse HbbTV info"),
-      .desc   = N_("Parse HbbTV information from services."),
-      .off    = offsetof(config_t, hbbtv),
-      .group  = 7
     },
     {
       .type   = PT_STR,
